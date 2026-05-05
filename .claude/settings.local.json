@@ -31,7 +31,13 @@
       "PowerShell($runs = Invoke-RestMethod \"http://127.0.0.1:8000/runs\"; Write-Host \"=== /runs: $\\($runs.Count\\) records \\(simulation_runs table\\) ===\")",
       "PowerShell(Invoke-RestMethod \"http://127.0.0.1:8000/networks/1-LV-rural1--0-sw\" | ConvertTo-Json)",
       "PowerShell(Invoke-RestMethod \"http://127.0.0.1:8000/runs\" | ConvertTo-Json -Depth 4)",
-      "PowerShell(Invoke-RestMethod \"http://127.0.0.1:8000/runs\" | ConvertTo-Json -Depth 5)"
+      "PowerShell(Invoke-RestMethod \"http://127.0.0.1:8000/runs\" | ConvertTo-Json -Depth 5)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('main.py'\\).read\\(\\)\\); print\\('main.py: syntax OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('db.py'\\).read\\(\\)\\); print\\('db.py: syntax OK'\\)\")",
+      "Bash(python -c \"import duckdb; print\\('duckdb:', duckdb.__version__\\)\")",
+      "Bash(python -c \"import pyarrow; print\\('pyarrow:', pyarrow.__version__\\)\")",
+      "Bash(pip install *)",
+      "Bash(python -)"
     ]
   }
 }
