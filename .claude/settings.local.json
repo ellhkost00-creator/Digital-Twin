@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\anton\\\\Desktop\\\\DT\" -Force)",
+      "Bash(Select-Object Name, PSIsContainer)",
+      "Bash(Format-Table -AutoSize)",
+      "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\anton\\\\Desktop\\\\DT\" -Force | Where-Object { -not $_.PSIsContainer } | Select-Object Name)",
+      "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\anton\\\\Desktop\\\\DT\" -Force -Depth 0 | Format-Table Name, @{Name=\"Type\"; Expression={if\\($_.PSIsContainer\\){\"Folder\"}else{\"File\"}}} -AutoSize)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\anton\\\\Desktop\\\\DT\\\\digital-twin-lab\\\\src\\\\lib\")",
+      "Bash(Select-Object Name)",
+      "PowerShell(Get-ChildItem \"C:\\\\Users\\\\anton\\\\Desktop\\\\DT\\\\digital-twin-lab\" -Force | Where-Object { -not $_.PSIsContainer } | Select-Object Name)",
+      "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\anton\\\\Desktop\\\\DT\\\\simbench-backend\" -Force -Depth 1 | Where-Object { -not $_.Name.StartsWith\\('.'\\) } | Select-Object Name, @{Name=\"Type\"; Expression={if\\($_.PSIsContainer\\){\"Folder\"}else{\"File\"}}} | Format-Table -AutoSize)",
+      "PowerShell(Head *)",
+      "PowerShell(Get-ChildItem *)",
+      "PowerShell(Get-ChildItem \"C:\\\\Users\\\\anton\\\\Desktop\\\\DT\\\\simbench-backend\\\\data\\\\results\\\\1-LV-rural1--0-sw\\\\2016-01-01_20260504-104528\" | Select-Object Name, @{Name=\"Type\"; Expression={if\\($_.PSIsContainer\\){\"Folder\"}else{\"File\"}}})",
+      "Bash(pip show *)",
+      "PowerShell(cd \"C:\\\\Users\\\\anton\\\\Desktop\\\\DT\\\\simbench-backend\"; Start-Process -NoNewWindow -FilePath \"uvicorn\" -ArgumentList \"main:app\", \"--host\", \"127.0.0.1\", \"--port\", \"8000\", \"--log-level\", \"info\" -RedirectStandardOutput \"$env:TEMP\\\\uvicorn_stdout.txt\" -RedirectStandardError \"$env:TEMP\\\\uvicorn_stderr.txt\" -PassThru | Select-Object Id)",
+      "PowerShell(Get-Content *)",
+      "PowerShell(Invoke-RestMethod -Uri \"http://127.0.0.1:8000/\" -Method Get | ConvertTo-Json -Depth 3)",
+      "PowerShell(Invoke-RestMethod -Uri \"http://127.0.0.1:8000/networks\" -Method Get | ConvertTo-Json -Depth 2 | Select-Object -First 60)",
+      "PowerShell(Invoke-RestMethod -Uri \"http://127.0.0.1:8000/runs\" -Method Get | ConvertTo-Json -Depth 4)",
+      "PowerShell(Remove-Item *)",
+      "PowerShell(Get-Command *)",
+      "PowerShell(docker run *)",
+      "PowerShell(docker exec simbench-pg *)",
+      "PowerShell(Stop-Process *)",
+      "PowerShell($nets = Invoke-RestMethod -Uri \"http://127.0.0.1:8000/networks\"; Write-Host \"networks count: $\\($nets.Count\\)\"; $nets[0] | ConvertTo-Json)",
+      "PowerShell($runs = Invoke-RestMethod -Uri \"http://127.0.0.1:8000/runs\"; Write-Host \"runs count: $\\($runs.Count\\)\"; $runs[0] | ConvertTo-Json -Depth 3)",
+      "PowerShell(Get-NetTCPConnection *)",
+      "PowerShell($nets = Invoke-RestMethod \"http://127.0.0.1:8000/networks\"; Write-Host \"=== /networks: $\\($nets.Count\\) records ===\"; $nets[0] | ConvertTo-Json)",
+      "PowerShell($runs = Invoke-RestMethod \"http://127.0.0.1:8000/runs\"; Write-Host \"=== /runs: $\\($runs.Count\\) records \\(simulation_runs table\\) ===\")",
+      "PowerShell(Invoke-RestMethod \"http://127.0.0.1:8000/networks/1-LV-rural1--0-sw\" | ConvertTo-Json)",
+      "PowerShell(Invoke-RestMethod \"http://127.0.0.1:8000/runs\" | ConvertTo-Json -Depth 4)",
+      "PowerShell(Invoke-RestMethod \"http://127.0.0.1:8000/runs\" | ConvertTo-Json -Depth 5)"
+    ]
+  }
+}
