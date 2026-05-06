@@ -39,7 +39,8 @@
       "Bash(pip install *)",
       "Bash(python -)",
       "Bash(Select-Object Name, Mode)",
-      "Bash(xargs grep -l \"conversion\\\\|import\\\\|network\")"
+      "Bash(xargs grep -l \"conversion\\\\|import\\\\|network\")",
+      "Bash(findstr *)"
     ]
   }
 }
