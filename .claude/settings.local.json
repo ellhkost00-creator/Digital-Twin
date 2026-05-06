@@ -37,7 +37,9 @@
       "Bash(python -c \"import duckdb; print\\('duckdb:', duckdb.__version__\\)\")",
       "Bash(python -c \"import pyarrow; print\\('pyarrow:', pyarrow.__version__\\)\")",
       "Bash(pip install *)",
-      "Bash(python -)"
+      "Bash(python -)",
+      "Bash(Select-Object Name, Mode)",
+      "Bash(xargs grep -l \"conversion\\\\|import\\\\|network\")"
     ]
   }
 }
