@@ -859,7 +859,7 @@ def run_opendss_simulation(network_id: str, request: OpenDSSRunRequest):
             shutil.copytree(src, dst)
 
     if mode == "unbalanced":
-        for sub in ["res_bus_3ph", "res_line_3ph"]:
+        for sub in ["res_bus_3ph", "res_line_3ph", "res_trafo_3ph"]:
             src = src_dir / sub
             if src.exists():
                 dst = out_dir / sub
@@ -1204,14 +1204,19 @@ _KIND_TO_PATH: dict[str, tuple[str, str]] = {
 
 _KIND_TO_3PH_PATH: dict[str, list[tuple[str, str, str]]] = {
     "vm-pu": [
-        ("a", "res_bus_3ph",  "vm_a_pu.csv"),
-        ("b", "res_bus_3ph",  "vm_b_pu.csv"),
-        ("c", "res_bus_3ph",  "vm_c_pu.csv"),
+        ("a", "res_bus_3ph",   "vm_a_pu.csv"),
+        ("b", "res_bus_3ph",   "vm_b_pu.csv"),
+        ("c", "res_bus_3ph",   "vm_c_pu.csv"),
     ],
     "line-loading": [
-        ("a", "res_line_3ph", "loading_a_percent.csv"),
-        ("b", "res_line_3ph", "loading_b_percent.csv"),
-        ("c", "res_line_3ph", "loading_c_percent.csv"),
+        ("a", "res_line_3ph",  "loading_a_percent.csv"),
+        ("b", "res_line_3ph",  "loading_b_percent.csv"),
+        ("c", "res_line_3ph",  "loading_c_percent.csv"),
+    ],
+    "trafo-loading": [
+        ("a", "res_trafo_3ph", "loading_a_percent.csv"),
+        ("b", "res_trafo_3ph", "loading_b_percent.csv"),
+        ("c", "res_trafo_3ph", "loading_c_percent.csv"),
     ],
 }
 
@@ -1253,12 +1258,39 @@ def get_result_phases(network_id: str, run_id: str, kind: str):
             raise HTTPException(status_code=404, detail=f"Phase {phase.upper()} data not found ({sub}/{fname})")
         df = pd.read_csv(path, sep=";", index_col=0)
         result[phase] = {
-            "mean":   [round(v, 6) for v in df.mean(axis=1).tolist()],
-            "max":    [round(v, 6) for v in df.max(axis=1).tolist()],
-            "min":    [round(v, 6) for v in df.min(axis=1).tolist()],
-            "n_rows": len(df),
+            "mean":    [round(v, 6) for v in df.mean(axis=1).tolist()],
+            "max":     [round(v, 6) for v in df.max(axis=1).tolist()],
+            "min":     [round(v, 6) for v in df.min(axis=1).tolist()],
+            "n_rows":  len(df),
+            "columns": df.columns.tolist(),
         }
     return result
+
+
+@app.get("/networks/{network_id}/results/{run_id}/{kind}/phases/column/{col_name:path}")
+def get_result_phases_column(network_id: str, run_id: str, kind: str, col_name: str):
+    """Return per-phase time-series for a single component (unbalanced OpenDSS only)."""
+    entries = _KIND_TO_3PH_PATH.get(kind)
+    if not entries:
+        raise HTTPException(status_code=400, detail=f"No phase data for kind '{kind}'")
+    result: dict[str, list] = {}
+    for phase, sub, fname in entries:
+        path = RESULTS_DIR / network_id / run_id / sub / fname
+        if not path.exists():
+            raise HTTPException(status_code=404, detail=f"Phase {phase.upper()} data not found")
+        df = pd.read_csv(path, sep=";", index_col=0)
+        # column names may be stored as integers; try int key first
+        if col_name not in df.columns:
+            try:
+                col_key = int(col_name)
+                if col_key not in df.columns:
+                    raise HTTPException(status_code=404, detail=f"Column '{col_name}' not found in phase {phase.upper()}")
+                result[phase] = [round(v, 6) for v in df[col_key].tolist()]
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=404, detail=f"Column '{col_name}' not found in phase {phase.upper()}")
+        else:
+            result[phase] = [round(v, 6) for v in df[col_name].tolist()]
+    return {"column": col_name, "a": result["a"], "b": result["b"], "c": result["c"]}
 
 
 @app.get("/networks/{network_id}/results/{run_id}/{kind}/column/{col_name:path}")

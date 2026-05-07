@@ -449,6 +449,7 @@ export interface PhaseData {
   max: number[];
   min: number[];
   n_rows: number;
+  columns: string[];
 }
 
 export interface PhasesResult {
@@ -465,5 +466,17 @@ export async function fetchResultPhases(
   const url = `${API_BASE}/networks/${networkId}/results/${runId}/${kind}/phases`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to load ${kind} phases (${res.status})`);
+  return res.json();
+}
+
+export async function fetchResultPhasesColumn(
+  networkId: string,
+  runId: string,
+  kind: ResultKind,
+  colName: string,
+): Promise<{ column: string; a: number[]; b: number[]; c: number[] }> {
+  const url = `${API_BASE}/networks/${networkId}/results/${runId}/${kind}/phases/column/${encodeURIComponent(colName)}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Failed to load phase column (${res.status})`);
   return res.json();
 }

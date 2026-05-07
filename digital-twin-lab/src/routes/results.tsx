@@ -15,7 +15,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { networks } from "@/lib/mock-data";
 import { getAllScenarios } from "@/lib/scenarios-store";
 import { useRuns } from "@/lib/runs-store";
-import { API_BASE, fetchResultEnvelope, fetchResultColumn, fetchResultPhases, type EnvelopeResult, type PhasesResult } from "@/lib/api";
+import { API_BASE, fetchResultEnvelope, fetchResultColumn, fetchResultPhases, fetchResultPhasesColumn, type EnvelopeResult, type PhasesResult } from "@/lib/api";
 import {
   ResponsiveContainer,
   LineChart,
@@ -630,13 +630,14 @@ function RealKpiCards({ ctx }: { ctx: StoredSimulationResult }) {
 
   const vmPhases = useResultPhases(ctx.networkId, ctx.runId, "vm-pu", isUnbalanced);
   const llPhases = useResultPhases(ctx.networkId, ctx.runId, "line-loading", isUnbalanced);
+  const tlPhases = useResultPhases(ctx.networkId, ctx.runId, "trafo-loading", isUnbalanced);
 
   const cards = isUnbalanced
     ? [
         { label: "Min voltage",      value: phaseGlobalMin(vmPhases, 4), unit: "pu", icon: TrendingDown, tone: "text-destructive" },
         { label: "Max voltage",      value: phaseGlobalMax(vmPhases, 4), unit: "pu", icon: TrendingUp,   tone: "text-warning-foreground" },
         { label: "Max line loading", value: phaseGlobalMax(llPhases, 1), unit: "%",  icon: Cable,        tone: "text-info" },
-        { label: "Max trafo loading",value: fmtEnv(tl, "max", 1),        unit: "%",  icon: Zap,          tone: "text-primary" },
+        { label: "Max trafo loading",value: phaseGlobalMax(tlPhases, 1), unit: "%",  icon: Zap,          tone: "text-primary" },
       ]
     : [
         { label: "Min voltage",      value: fmtEnv(vm, "min", 4), unit: "pu", icon: TrendingDown, tone: "text-destructive" },
@@ -682,6 +683,7 @@ function RealResultsTabs({ ctx }: { ctx: StoredSimulationResult }) {
 
   const vmPhases = useResultPhases(ctx.networkId, ctx.runId, "vm-pu", isUnbalanced);
   const llPhases = useResultPhases(ctx.networkId, ctx.runId, "line-loading", isUnbalanced);
+  const tlPhases = useResultPhases(ctx.networkId, ctx.runId, "trafo-loading", isUnbalanced);
 
   return (
     <Tabs defaultValue="voltages">
@@ -727,14 +729,24 @@ function RealResultsTabs({ ctx }: { ctx: StoredSimulationResult }) {
       <TabsContent value="trafos" className="mt-4">
         <EnvelopeChart
           title="Transformer loading"
-          subtitle={isOpenDSS ? "Mean loading_percent across all transformers" : "Mean / max loading_percent across all transformers"}
+          subtitle={
+            isUnbalanced
+              ? "Mean loading_percent per phase (A / B / C) across all transformers"
+              : isOpenDSS
+              ? "Mean loading_percent across all transformers"
+              : "Mean / max loading_percent across all transformers"
+          }
           state={tl} ctx={ctx} unit="%" yDomain={[0, "auto"]}
-          meanOnly={isOpenDSS}
+          meanOnly={isOpenDSS && !isUnbalanced}
+          phaseState={isUnbalanced ? tlPhases : undefined}
           thresholds={[{ y: 100, label: "100%" }]}
         />
       </TabsContent>
       <TabsContent value="explorer" className="mt-4">
-        <RealComponentExplorer ctx={ctx} vm={vm} ll={ll} tl={tl} />
+        <RealComponentExplorer
+          ctx={ctx} vm={vm} ll={ll} tl={tl}
+          vmPhases={vmPhases} llPhases={llPhases} tlPhases={tlPhases}
+        />
       </TabsContent>
     </Tabs>
   );
@@ -954,37 +966,52 @@ function ComponentCombobox({
 }
 
 function RealComponentExplorer({
-  ctx, vm, ll, tl,
+  ctx, vm, ll, tl, vmPhases, llPhases, tlPhases,
 }: {
   ctx: StoredSimulationResult;
   vm: EnvState; ll: EnvState; tl: EnvState;
+  vmPhases: PhaseState; llPhases: PhaseState; tlPhases: PhaseState;
 }) {
   type Kind = "bus" | "line" | "trafo";
+  const isUnbalanced = ctx.networkId.endsWith("-unbalanced");
+
   const [kind, setKind]   = useState<Kind>("bus");
   const [name, setName]   = useState<string>("");
   const [colLoading, setColLoading] = useState(false);
   const [colError,   setColError]   = useState<string | null>(null);
   const [colValues,  setColValues]  = useState<number[] | null>(null);
+  const [phaseColValues, setPhaseColValues] = useState<{ a: number[]; b: number[]; c: number[] } | null>(null);
 
-  const source    = kind === "bus" ? vm : kind === "line" ? ll : tl;
-  const kindLabel = kind === "bus" ? "Bus" : kind === "line" ? "Line" : "Transformer";
+  const source      = kind === "bus" ? vm       : kind === "line" ? ll       : tl;
+  const phaseSource = kind === "bus" ? vmPhases : kind === "line" ? llPhases : tlPhases;
+  const kindLabel   = kind === "bus" ? "Bus" : kind === "line" ? "Line" : "Transformer";
   const resultKind: ResultKind = kind === "bus" ? "vm-pu" : kind === "line" ? "line-loading" : "trafo-loading";
-  const unit      = kind === "bus" ? " pu" : "%";
-  const columns   = source.data?.columns ?? [];
+  const unit        = kind === "bus" ? " pu" : "%";
 
-  // Reset selection when kind changes
-  useEffect(() => { setName(""); setColValues(null); }, [kind]);
+  const columns     = isUnbalanced
+    ? (phaseSource.data?.a.columns ?? [])
+    : (source.data?.columns ?? []);
+  const colsLoading = isUnbalanced ? phaseSource.loading : source.loading;
 
-  // Fetch single column on demand
+  // Reset on kind change
+  useEffect(() => { setName(""); setColValues(null); setPhaseColValues(null); }, [kind]);
+
+  // Fetch column data on name selection
   useEffect(() => {
     if (!name) return;
     let cancelled = false;
-    setColLoading(true); setColError(null); setColValues(null);
-    fetchResultColumn(ctx.networkId, ctx.runId, resultKind, name)
-      .then((d) => { if (!cancelled) { setColValues(d.values); setColLoading(false); } })
-      .catch((e: Error) => { if (!cancelled) { setColError(e.message); setColLoading(false); } });
+    setColLoading(true); setColError(null); setColValues(null); setPhaseColValues(null);
+    if (isUnbalanced) {
+      fetchResultPhasesColumn(ctx.networkId, ctx.runId, resultKind, name)
+        .then((d) => { if (!cancelled) { setPhaseColValues({ a: d.a, b: d.b, c: d.c }); setColLoading(false); } })
+        .catch((e: Error) => { if (!cancelled) { setColError(e.message); setColLoading(false); } });
+    } else {
+      fetchResultColumn(ctx.networkId, ctx.runId, resultKind, name)
+        .then((d) => { if (!cancelled) { setColValues(d.values); setColLoading(false); } })
+        .catch((e: Error) => { if (!cancelled) { setColError(e.message); setColLoading(false); } });
+    }
     return () => { cancelled = true; };
-  }, [ctx.networkId, ctx.runId, resultKind, name]);
+  }, [ctx.networkId, ctx.runId, resultKind, name, isUnbalanced]);
 
   const tooltipStyle = {
     backgroundColor: "var(--card)",
@@ -995,6 +1022,7 @@ function RealComponentExplorer({
 
   const stepMinutes = ctx.networkId.startsWith("opendss-") ? 30 : 15;
 
+  // Balanced: single-value series
   const series = useMemo(() => {
     if (!colValues || !name) return [];
     const ts = generateTimestamps(ctx, colValues.length, stepMinutes);
@@ -1006,14 +1034,36 @@ function RealComponentExplorer({
     }));
   }, [colValues, name, ctx, stepMinutes]);
 
+  // Unbalanced: per-phase series
+  const phaseSeries = useMemo(() => {
+    if (!phaseColValues || !name) return [];
+    const n = phaseColValues.a.length;
+    const ts = generateTimestamps(ctx, n, stepMinutes);
+    return Array.from({ length: n }, (_, i) => ({
+      t: ts[i].getTime(),
+      label: formatAxisTick(ts[i], ctx.horizon),
+      full: formatFullTimestamp(ts[i]),
+      valueA: Number.isFinite(phaseColValues.a[i]) ? +phaseColValues.a[i].toFixed(4) : null,
+      valueB: Number.isFinite(phaseColValues.b[i]) ? +phaseColValues.b[i].toFixed(4) : null,
+      valueC: Number.isFinite(phaseColValues.c[i]) ? +phaseColValues.c[i].toFixed(4) : null,
+    }));
+  }, [phaseColValues, name, ctx, stepMinutes]);
+
+  const activeSeries  = isUnbalanced ? phaseSeries : series;
+  const tickInterval  = Math.max(0, Math.floor(activeSeries.length / 8) - 1);
+
   const stats = useMemo(() => {
+    if (isUnbalanced && phaseColValues) {
+      const all = [...phaseColValues.a, ...phaseColValues.b, ...phaseColValues.c].filter(Number.isFinite);
+      if (all.length === 0) return null;
+      const min = Math.min(...all), max = Math.max(...all);
+      return { min: +min.toFixed(4), max: +max.toFixed(4), avg: +(all.reduce((a, b) => a + b, 0) / all.length).toFixed(4) };
+    }
     const vals = series.map((s) => s.value).filter((v): v is number => v !== null);
     if (vals.length === 0) return null;
     const min = Math.min(...vals), max = Math.max(...vals);
     return { min, max, avg: +(vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(4) };
-  }, [series]);
-
-  const tickInterval = Math.max(0, Math.floor(series.length / 8) - 1);
+  }, [series, phaseColValues, isUnbalanced]);
 
   return (
     <Card className="p-5">
@@ -1022,7 +1072,9 @@ function RealComponentExplorer({
         <div className="text-sm font-semibold">Component Explorer</div>
       </div>
       <div className="text-xs text-muted-foreground mb-4">
-        Plot a single bus, line, or transformer from the simulation result.
+        {isUnbalanced
+          ? "Plot per-phase values for a single bus, line, or transformer."
+          : "Plot a single bus, line, or transformer from the simulation result."}
       </div>
 
       <div className="grid gap-4 md:grid-cols-[180px_1fr] md:items-end">
@@ -1050,7 +1102,7 @@ function RealComponentExplorer({
             columns={columns}
             value={name}
             onChange={setName}
-            loading={source.loading}
+            loading={colsLoading}
             placeholder={`Select ${kindLabel.toLowerCase()}…`}
           />
         </div>
@@ -1076,7 +1128,7 @@ function RealComponentExplorer({
         <div className="mt-4 text-sm text-destructive">{colError}</div>
       )}
 
-      {name && series.length > 0 && (
+      {name && activeSeries.length > 0 && (
         <div className="mt-6 space-y-4">
           {stats && (
             <div className="grid gap-3 grid-cols-3">
@@ -1098,7 +1150,7 @@ function RealComponentExplorer({
 
           <div className="h-80">
             <ResponsiveContainer>
-              <LineChart data={series} margin={{ top: 5, right: 48, left: -10, bottom: 0 }}>
+              <LineChart data={activeSeries as object[]} margin={{ top: 5, right: 48, left: -10, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="oklch(0.91 0.01 240)" />
                 <XAxis
                   dataKey="t" type="number" scale="time"
@@ -1118,8 +1170,9 @@ function RealComponentExplorer({
                     const p = payload?.[0]?.payload as { full?: string } | undefined;
                     return p?.full ?? String(_label);
                   }}
-                  formatter={(value) => [`${value}${unit}`, kindLabel]}
+                  formatter={(value, name) => [`${value}${unit}`, String(name)]}
                 />
+                {isUnbalanced && <Legend wrapperStyle={{ fontSize: 12 }} />}
                 {kind === "bus" && (
                   <>
                     <ReferenceLine y={0.94} stroke="oklch(0.58 0.22 25)" strokeDasharray="4 4" />
@@ -1127,11 +1180,19 @@ function RealComponentExplorer({
                   </>
                 )}
                 {kind !== "bus" && <ReferenceLine y={100} stroke="oklch(0.58 0.22 25)" strokeDasharray="4 4" />}
-                <Line
-                  dataKey="value"
-                  stroke={kind === "bus" ? "oklch(0.55 0.18 240)" : kind === "line" ? "oklch(0.72 0.18 60)" : "oklch(0.62 0.16 150)"}
-                  strokeWidth={2} dot={false} name={`${kindLabel} ${name}`}
-                />
+                {isUnbalanced ? (
+                  <>
+                    <Line dataKey="valueA" stroke={PHASE_COLORS.a} strokeWidth={2} dot={false} name="Phase A" />
+                    <Line dataKey="valueB" stroke={PHASE_COLORS.b} strokeWidth={2} dot={false} name="Phase B" />
+                    <Line dataKey="valueC" stroke={PHASE_COLORS.c} strokeWidth={2} dot={false} name="Phase C" />
+                  </>
+                ) : (
+                  <Line
+                    dataKey="value"
+                    stroke={kind === "bus" ? "oklch(0.55 0.18 240)" : kind === "line" ? "oklch(0.72 0.18 60)" : "oklch(0.62 0.16 150)"}
+                    strokeWidth={2} dot={false} name={`${kindLabel} ${name}`}
+                  />
+                )}
               </LineChart>
             </ResponsiveContainer>
           </div>
