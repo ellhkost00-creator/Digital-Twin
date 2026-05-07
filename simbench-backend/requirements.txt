@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+simbench
+pandapower
+pandas
+sqlalchemy
+psycopg2-binary
+python-dotenv
