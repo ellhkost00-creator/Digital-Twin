@@ -14,8 +14,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
-import { useRuns } from "@/lib/runs-store";
-import { Search, RefreshCw, BarChart3 } from "lucide-react";
+import { useRuns, deleteRun } from "@/lib/runs-store";
+import { Search, RefreshCw, BarChart3, Trash2 } from "lucide-react";
 
 export const Route = createFileRoute("/runs")({
   loader: () => fetchSimbenchNetworks(),
@@ -43,6 +43,20 @@ function SimulationRuns() {
   const [status, setStatus] = useState("all");
   const highlightedRowRef = useRef<HTMLTableRowElement | null>(null);
   const [flashRunId, setFlashRunId] = useState<string | undefined>(highlight);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
+
+  const handleDelete = async (id: string) => {
+    setDeleting(id);
+    try {
+      await deleteRun(id);
+    } catch (e) {
+      console.error("Delete failed", e);
+    } finally {
+      setDeleting(null);
+      setConfirmId(null);
+    }
+  };
 
   // Scroll & flash the highlighted run when it appears
   useEffect(() => {
@@ -164,15 +178,46 @@ function SimulationRuns() {
                     )}
                   </td>
                   <td className="py-3 px-4 text-center">
-                    {r.status === "completed" ? (
-                      <Button asChild variant="ghost" size="sm">
-                        <Link to="/results" search={{ runId: r.id }}>
-                          <BarChart3 className="h-4 w-4 mr-1" /> Results
-                        </Link>
-                      </Button>
-                    ) : (
-                      <span className="text-xs text-muted-foreground px-2">—</span>
-                    )}
+                    <div className="flex items-center justify-center gap-1">
+                      {r.status === "completed" && (
+                        <Button asChild variant="ghost" size="sm">
+                          <Link to="/results" search={{ runId: r.id }}>
+                            <BarChart3 className="h-4 w-4 mr-1" /> Results
+                          </Link>
+                        </Button>
+                      )}
+                      {confirmId === r.id ? (
+                        <>
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            disabled={deleting === r.id}
+                            onClick={() => handleDelete(r.id)}
+                            className="h-7 px-2 text-xs"
+                          >
+                            {deleting === r.id ? "Deleting…" : "Confirm"}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setConfirmId(null)}
+                            className="h-7 px-2 text-xs"
+                          >
+                            Cancel
+                          </Button>
+                        </>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setConfirmId(r.id)}
+                          className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                          title="Delete run"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                    </div>
                   </td>
                 </tr>
                 );

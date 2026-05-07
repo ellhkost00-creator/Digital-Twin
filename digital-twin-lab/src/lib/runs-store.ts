@@ -7,7 +7,7 @@ import {
   type Run,
 } from "./mock-data";
 import { getAllScenarios } from "./scenarios-store";
-import { fetchRuns } from "./api";
+import { fetchRuns, deleteRunApi } from "./api";
 import { parseRunId } from "./run-context";
 
 type Listener = () => void;
@@ -154,6 +154,17 @@ export function removeRun(id: string): void {
     runsArray.splice(idx, 1);
     emit();
   }
+}
+
+/**
+ * Delete a run from the backend (DB + result files) and remove it from
+ * the in-memory store. Throws on network/API error.
+ */
+export async function deleteRun(id: string): Promise<void> {
+  const run = runsArray.find((r) => r.id === id) as (Run & { networkId?: string }) | undefined;
+  const networkId = run?.networkId ?? "";
+  await deleteRunApi(id, networkId);
+  removeRun(id);
 }
 
 export function createRun(input: CreateRunInput): string {

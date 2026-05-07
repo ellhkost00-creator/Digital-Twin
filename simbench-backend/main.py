@@ -19,7 +19,7 @@ from db import (
     get_db_scenarios, save_scenario, delete_scenario,
     get_db_users, save_user, update_user_role, delete_user, seed_users,
     save_validation_metrics, get_latest_validation,
-    init_db, save_network, save_run, seed_networks_from_file,
+    init_db, save_network, save_run, delete_run, seed_networks_from_file,
 )
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -1024,6 +1024,25 @@ def root():
 @app.get("/runs")
 def list_runs():
     return get_db_runs() or []
+
+
+@app.delete("/runs/{run_id}", status_code=204)
+def delete_run_endpoint(run_id: str, network_id: str):
+    """
+    Delete a simulation run: removes the DB record and the on-disk result files.
+    Requires `network_id` as a query parameter so the results directory can be located.
+    Non-fatal if DB is unavailable — the files are still deleted.
+    """
+    # Remove result files from disk
+    run_dir = RESULTS_DIR / network_id / run_id
+    if run_dir.exists():
+        shutil.rmtree(run_dir)
+
+    # Remove DB record (best-effort — returns False if DB is down, which is fine)
+    deleted = delete_run(run_id)
+    if not deleted and not run_dir.exists():
+        # Neither DB nor files existed
+        raise HTTPException(status_code=404, detail="Run not found")
 
 
 @app.get("/networks")

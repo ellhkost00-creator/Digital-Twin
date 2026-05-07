@@ -174,6 +174,12 @@ export async function fetchRuns(): Promise<BackendRun[]> {
   return response.json();
 }
 
+export async function deleteRunApi(runId: string, networkId: string): Promise<void> {
+  const url = `${API_BASE}/runs/${encodeURIComponent(runId)}?network_id=${encodeURIComponent(networkId)}`;
+  const res = await fetch(url, { method: "DELETE" });
+  if (!res.ok && res.status !== 204) throw new Error(`Failed to delete run (${res.status})`);
+}
+
 export interface ConvertOpenDSSResult {
   status: "completed";
   network: string;

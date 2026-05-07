@@ -43,7 +43,8 @@
       "Bash(findstr *)",
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(ls /mnt/c/Users/anton/Desktop/DT/digital-twin-lab/src/routes/)"
     ]
   }
 }

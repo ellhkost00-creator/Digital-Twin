@@ -216,6 +216,27 @@ def save_run(
         return False
 
 
+def delete_run(run_id: str) -> bool:
+    """
+    Delete a simulation run from PostgreSQL by run_id.
+    Returns True if deleted, False if not found or DB unavailable.
+    """
+    if not db_available():
+        return False
+    try:
+        with _Session() as session:
+            row = session.query(SimulationRun).filter_by(run_id=run_id).first()
+            if not row:
+                return False
+            session.delete(row)
+            session.commit()
+        logger.info("Run %s deleted from PostgreSQL", run_id)
+        return True
+    except SQLAlchemyError as exc:
+        logger.warning("Could not delete run %s: %s", run_id, exc)
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Network helpers (used by /networks and /networks/{id})
 # ---------------------------------------------------------------------------
