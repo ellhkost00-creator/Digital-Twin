@@ -40,7 +40,9 @@
       "Bash(python -)",
       "Bash(Select-Object Name, Mode)",
       "Bash(xargs grep -l \"conversion\\\\|import\\\\|network\")",
-      "Bash(findstr *)"
+      "Bash(findstr *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }
