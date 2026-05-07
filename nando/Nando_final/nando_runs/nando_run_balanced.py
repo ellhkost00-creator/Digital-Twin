@@ -637,6 +637,14 @@ def export_all_line_loading_csv(
 
 if __name__ == "__main__":
 
+    import os as _os_c
+    _npts_c    = int(_os_c.environ.get("NANDO_VALIDATION_STEPS", "48"))
+    _cache_key = f"{config.SELECTED_DAY}_{_npts_c}"
+    _sentinel  = config.RESULTS_DIR / ".balanced_cache.txt"
+    if _sentinel.exists() and _sentinel.read_text().strip() == _cache_key:
+        print(f"[CACHE] Balanced DSS results current for day={config.SELECTED_DAY}, steps={_npts_c} — skipping.")
+        import sys as _sys; _sys.exit(0)
+
     # ── 1. Load network data from Excel ───────────────────────────────────────
     print("\033[1;92mLoading network data from Excel...\033[0m")
     net_data_obj = NetworkData(
@@ -777,3 +785,5 @@ if __name__ == "__main__":
     print(f"  Output 2 (all lines):       {out_lines}")
     print(f"  Output 3 (mean vm_pu):      {out_pu}")
     print(f"  Output 4 (trafo loading):   {out_trafo_xlsx}")
+    config.RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    _sentinel.write_text(_cache_key)

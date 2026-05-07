@@ -1,16 +1,10 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
 import { AppShell, PageHeader, StatusBadge } from "@/components/app-shell";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Slider } from "@/components/ui/slider";
 import type { Network } from "@/lib/mock-data";
-import { fetchSimbenchNetworks, runOpenDSSSimulation, type OpenDSSRunResult } from "@/lib/api";
-import {
-  ArrowLeft, Cable, Zap, Box, Plug, Download, Play,
-  CalendarDays, Loader2, AlertCircle, CheckCircle2, BarChart3,
-} from "lucide-react";
+import { fetchSimbenchNetworks } from "@/lib/api";
+import { ArrowLeft, Cable, Zap, Box, Plug, Download, Play } from "lucide-react";
 import { useRole } from "@/hooks/use-role";
 import { cn } from "@/lib/utils";
 
@@ -47,130 +41,6 @@ function isOpenDSS(networkId: string) {
   return networkId.startsWith("opendss-");
 }
 
-function dayToLabel(day: number): string {
-  return new Date(2023, 0, day).toLocaleDateString("en-AU", { month: "long", day: "numeric" });
-}
-
-function dayToSeason(day: number): string {
-  if (day >= 355 || day <= 78)  return "Summer";
-  if (day <= 170)               return "Autumn";
-  if (day <= 263)               return "Winter";
-  return "Spring";
-}
-
-// ── OpenDSS run panel ───────────────────────────────────────────────────────
-
-type RunState =
-  | { phase: "idle" }
-  | { phase: "running" }
-  | { phase: "done"; result: OpenDSSRunResult }
-  | { phase: "error"; message: string };
-
-function OpenDSSRunPanel({ networkId, mode }: { networkId: string; mode: string }) {
-  const [day, setDay] = useState(15);
-  const [runState, setRunState] = useState<RunState>({ phase: "idle" });
-
-  async function handleRun() {
-    setRunState({ phase: "running" });
-    try {
-      const result = await runOpenDSSSimulation(networkId, day);
-      setRunState({ phase: "done", result });
-    } catch (err) {
-      setRunState({ phase: "error", message: err instanceof Error ? err.message : String(err) });
-    }
-  }
-
-  const isRunning = runState.phase === "running";
-  const dateLabel = dayToLabel(day);
-  const season    = dayToSeason(day);
-
-  return (
-    <Card className="p-5">
-      <div className="text-sm font-semibold mb-4">Run Simulation</div>
-
-      {/* Day picker */}
-      <div className="mb-5">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <CalendarDays className="h-4 w-4 text-muted-foreground" />
-            <span className="font-medium">{dateLabel}</span>
-            <Badge variant="secondary" className="text-[10px]">{season}</Badge>
-          </div>
-          <span className="text-xs text-muted-foreground tabular-nums">Day {day} / 365</span>
-        </div>
-        <Slider
-          min={1} max={365} step={1}
-          value={[day]}
-          onValueChange={([v]) => setDay(v)}
-          disabled={isRunning}
-          className="w-full"
-        />
-        <div className="flex justify-between mt-1.5 text-[10px] text-muted-foreground">
-          <span>Jan</span><span>Apr</span><span>Jul</span><span>Oct</span><span>Dec</span>
-        </div>
-      </div>
-
-      {/* Mode display */}
-      <div className="flex items-center justify-between text-sm mb-5">
-        <span className="text-muted-foreground">Mode</span>
-        <Badge variant="outline" className="capitalize">{mode}</Badge>
-      </div>
-
-      {/* Result / error */}
-      {runState.phase === "done" && (
-        <div className="mb-4 space-y-2">
-          <div className="flex items-center gap-2 text-sm text-green-600">
-            <CheckCircle2 className="h-4 w-4 shrink-0" />
-            <span>Completed in {runState.result.duration_seconds}s</span>
-          </div>
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            {[
-              ["Under V", runState.result.violations.under_voltage],
-              ["Over V",  runState.result.violations.over_voltage],
-              ["Line",    runState.result.violations.line_overload],
-              ["Trafo",   runState.result.violations.trafo_overload],
-            ].map(([label, val]) => (
-              <div key={label} className={cn(
-                "rounded-lg border px-3 py-2 flex items-center justify-between",
-                Number(val) > 0 ? "border-destructive/40 bg-destructive/5" : "border-border bg-muted/20",
-              )}>
-                <span className="text-muted-foreground">{label}</span>
-                <span className={cn("font-semibold", Number(val) > 0 && "text-destructive")}>{val}</span>
-              </div>
-            ))}
-          </div>
-          <Button asChild variant="outline" size="sm" className="w-full gap-2 mt-1">
-            <Link to="/results" search={{ runId: runState.result.run_id, networkId }}>
-              <BarChart3 className="h-4 w-4" /> View Results
-            </Link>
-          </Button>
-        </div>
-      )}
-
-      {runState.phase === "error" && (
-        <div className="mb-4 flex items-start gap-2 p-3 rounded-lg border border-destructive/30 bg-destructive/5">
-          <AlertCircle className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
-          <p className="text-xs text-muted-foreground font-mono whitespace-pre-wrap break-all">
-            {runState.message}
-          </p>
-        </div>
-      )}
-
-      <Button
-        className="w-full gap-2"
-        disabled={isRunning}
-        onClick={handleRun}
-      >
-        {isRunning ? (
-          <><Loader2 className="h-4 w-4 animate-spin" /> Running…</>
-        ) : (
-          <><Play className="h-4 w-4" /> Run Simulation</>
-        )}
-      </Button>
-    </Card>
-  );
-}
-
 // ── Page ────────────────────────────────────────────────────────────────────
 
 function NetworkDetail() {
@@ -189,7 +59,6 @@ function NetworkDetail() {
 
   const plotSrc = n.plot_url && serviceUrl ? `${serviceUrl}${n.plot_url}` : null;
   const opendss = isOpenDSS(n.id);
-  const opendssMode = opendss ? n.id.split("-")[2] : null;
 
   return (
     <AppShell>
@@ -284,9 +153,6 @@ function NetworkDetail() {
             </dl>
           </Card>
 
-          {opendss && opendssMode && (
-            <OpenDSSRunPanel networkId={n.id} mode={opendssMode} />
-          )}
         </div>
       </div>
     </AppShell>

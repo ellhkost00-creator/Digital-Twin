@@ -484,9 +484,16 @@ class DSSExporter:
 if __name__ == "__main__":
     #check_data()
 
+    from pathlib import Path as _P
+    _sentinel = _P(EXPORT_DIR) / ".profiles_day.txt"
+    if _sentinel.exists() and _sentinel.read_text().strip() == str(SELECTED_DAY):
+        print(f"[CACHE] Profiles already generated for day {SELECTED_DAY} — skipping.")
+        sys.exit(0)
+
     xlsx_name = identify_network_xlsx(NETWORK_OPTION)
     xlsx_path = str(config.EXCELS_DIR / xlsx_name)
     print(f"Using network file: {xlsx_path}")
     nd = NetworkData(xlsx_path)
     exporter = DSSExporter(nd.data, EXPORT_DIR)
     exporter.export_all(selected_day=SELECTED_DAY, seed=SEED)
+    _sentinel.write_text(str(SELECTED_DAY))

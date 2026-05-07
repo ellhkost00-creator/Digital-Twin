@@ -319,6 +319,297 @@ def save_network(data: dict) -> bool:
         return False
 
 
+
+
+# ---------------------------------------------------------------------------
+# Scenario helpers
+# ---------------------------------------------------------------------------
+
+class Scenario(Base):
+    __tablename__ = "scenarios"
+
+    id         = Column(String,   primary_key=True)
+    name       = Column(String,   nullable=False)
+    network_id = Column(String,   nullable=False, index=True)
+    sim_type   = Column(String,   nullable=False)
+    mode       = Column(String,   nullable=False)
+    horizon    = Column(String,   nullable=False)
+    timestep   = Column(String,   nullable=False, default="15min")
+    created_by = Column(String,   nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+def _scenario_to_api(s: "Scenario") -> dict:
+    return {
+        "id":        s.id,
+        "name":      s.name,
+        "networkId": s.network_id,
+        "simType":   s.sim_type,
+        "mode":      s.mode,
+        "horizon":   s.horizon,
+        "timestep":  s.timestep,
+        "createdBy": s.created_by,
+        "createdAt": s.created_at.strftime("%Y-%m-%d") if s.created_at else None,
+    }
+
+
+def get_db_scenarios() -> list[dict] | None:
+    if not db_available():
+        return None
+    try:
+        with _Session() as session:
+            rows = session.query(Scenario).order_by(Scenario.created_at.desc()).all()
+            return [_scenario_to_api(r) for r in rows]
+    except SQLAlchemyError as exc:
+        logger.warning("DB read failed for scenarios: %s", exc)
+        return None
+
+
+def save_scenario(
+    *,
+    id: str,
+    name: str,
+    network_id: str,
+    sim_type: str = "time_series",
+    mode: str = "balanced",
+    horizon: str = "day",
+    timestep: str = "15min",
+    created_by: str = "unknown",
+) -> dict | None:
+    if not db_available():
+        return None
+    try:
+        with _Session() as session:
+            row = Scenario(
+                id=id, name=name, network_id=network_id,
+                sim_type=sim_type, mode=mode, horizon=horizon,
+                timestep=timestep, created_by=created_by,
+            )
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            return _scenario_to_api(row)
+    except SQLAlchemyError as exc:
+        logger.warning("Could not save scenario %s: %s", id, exc)
+        return None
+
+
+def delete_scenario(scenario_id: str) -> bool:
+    if not db_available():
+        return False
+    try:
+        with _Session() as session:
+            row = session.query(Scenario).filter_by(id=scenario_id).first()
+            if row:
+                session.delete(row)
+                session.commit()
+        return True
+    except SQLAlchemyError as exc:
+        logger.warning("Could not delete scenario %s: %s", scenario_id, exc)
+        return False
+
+
+# ---------------------------------------------------------------------------
+# User helpers
+# ---------------------------------------------------------------------------
+
+class User(Base):
+    __tablename__ = "users"
+
+    id         = Column(String,   primary_key=True)
+    name       = Column(String,   nullable=False)
+    email      = Column(String,   nullable=False, index=True)
+    role       = Column(String,   nullable=False)
+    initials   = Column(String,   nullable=False)
+    is_self    = Column(Boolean,  nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+def _user_to_api(u: "User") -> dict:
+    return {
+        "id":       u.id,
+        "name":     u.name,
+        "email":    u.email,
+        "role":     u.role,
+        "initials": u.initials,
+        "isSelf":   u.is_self,
+    }
+
+
+_SEED_USERS = [
+    {"id": "u-1", "name": "Marco Rossi",         "email": "marco.rossi@dtlab.io",     "role": "admin",      "initials": "MR", "is_self": True},
+    {"id": "u-2", "name": "Dr. Elena Marchetti", "email": "elena.marchetti@dtlab.io", "role": "researcher", "initials": "EM", "is_self": False},
+    {"id": "u-3", "name": "Sofia Bianchi",        "email": "sofia.bianchi@dtlab.io",  "role": "student",    "initials": "SB", "is_self": False},
+    {"id": "u-4", "name": "Luca Conti",           "email": "luca.conti@dtlab.io",     "role": "student",    "initials": "LC", "is_self": False},
+    {"id": "u-5", "name": "Giulia Ferrari",       "email": "giulia.ferrari@dtlab.io", "role": "researcher", "initials": "GF", "is_self": False},
+]
+
+
+def seed_users() -> bool:
+    if not db_available():
+        return False
+    try:
+        with _Session() as session:
+            if session.query(User).count() > 0:
+                return False
+        with _Session() as session:
+            for u in _SEED_USERS:
+                session.add(User(**u))
+            session.commit()
+        logger.info("Seeded %d users into PostgreSQL", len(_SEED_USERS))
+        return True
+    except SQLAlchemyError as exc:
+        logger.warning("Failed to seed users: %s", exc)
+        return False
+
+
+def get_db_users() -> list[dict] | None:
+    if not db_available():
+        return None
+    try:
+        with _Session() as session:
+            rows = session.query(User).order_by(User.created_at).all()
+            return [_user_to_api(r) for r in rows]
+    except SQLAlchemyError as exc:
+        logger.warning("DB read failed for users: %s", exc)
+        return None
+
+
+def save_user(
+    *,
+    id: str,
+    name: str,
+    email: str,
+    role: str,
+    initials: str,
+    is_self: bool = False,
+) -> dict | None:
+    if not db_available():
+        return None
+    try:
+        with _Session() as session:
+            existing = session.query(User).filter_by(email=email).first()
+            if existing:
+                return _user_to_api(existing)
+            row = User(id=id, name=name, email=email, role=role,
+                       initials=initials, is_self=is_self)
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            return _user_to_api(row)
+    except SQLAlchemyError as exc:
+        logger.warning("Could not save user %s: %s", id, exc)
+        return None
+
+
+def update_user_role(user_id: str, role: str) -> bool:
+    if not db_available():
+        return False
+    try:
+        with _Session() as session:
+            row = session.query(User).filter_by(id=user_id).first()
+            if row:
+                row.role = role
+                session.commit()
+        return True
+    except SQLAlchemyError as exc:
+        logger.warning("Could not update role for user %s: %s", user_id, exc)
+        return False
+
+
+def delete_user(user_id: str) -> bool:
+    if not db_available():
+        return False
+    try:
+        with _Session() as session:
+            row = session.query(User).filter_by(id=user_id).first()
+            if row:
+                session.delete(row)
+                session.commit()
+        return True
+    except SQLAlchemyError as exc:
+        logger.warning("Could not delete user %s: %s", user_id, exc)
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Validation metrics helpers
+# ---------------------------------------------------------------------------
+
+class ValidationMetrics(Base):
+    __tablename__ = "validation_metrics"
+
+    id                  = Column(Integer,  primary_key=True, autoincrement=True)
+    network_id          = Column(String,   nullable=False, index=True)
+    mode                = Column(String,   nullable=False)
+    day                 = Column(Integer,  nullable=False)
+    recorded_at         = Column(DateTime, nullable=False, default=datetime.utcnow)
+    bus_voltage_mape    = Column(Float,    nullable=True)
+    bus_voltage_max_err = Column(Float,    nullable=True)
+    bus_voltage_bias    = Column(Float,    nullable=True)
+    bus_voltage_matched = Column(Integer,  nullable=True)
+    mv_line_mae         = Column(Float,    nullable=True)
+    mv_line_max_ae      = Column(Float,    nullable=True)
+    lv_line_mae         = Column(Float,    nullable=True)
+    lv_line_max_ae      = Column(Float,    nullable=True)
+    trafo_mae           = Column(Float,    nullable=True)
+    trafo_max_ae        = Column(Float,    nullable=True)
+    full_validation     = Column(JSON,     nullable=True)
+
+
+def save_validation_metrics(
+    network_id: str,
+    mode: str,
+    day: int,
+    validation: dict,
+) -> bool:
+    if not db_available():
+        return False
+    try:
+        bv = validation.get("bus_voltage", {}) or {}
+        mv = validation.get("mv_line_loading", {}) or {}
+        lv = validation.get("lv_line_loading", {}) or {}
+        tr = validation.get("trafo_loading", {}) or {}
+        with _Session() as session:
+            session.add(ValidationMetrics(
+                network_id=network_id, mode=mode, day=day,
+                bus_voltage_mape=bv.get("mape"),
+                bus_voltage_max_err=bv.get("max_error"),
+                bus_voltage_bias=bv.get("bias"),
+                bus_voltage_matched=bv.get("matched"),
+                mv_line_mae=mv.get("mae"),
+                mv_line_max_ae=mv.get("max_ae"),
+                lv_line_mae=lv.get("mae"),
+                lv_line_max_ae=lv.get("max_ae"),
+                trafo_mae=tr.get("mae"),
+                trafo_max_ae=tr.get("max_ae"),
+                full_validation=validation,
+            ))
+            session.commit()
+        logger.info("Validation metrics saved for %s day=%s", network_id, day)
+        return True
+    except SQLAlchemyError as exc:
+        logger.warning("Could not save validation metrics: %s", exc)
+        return False
+
+
+def get_latest_validation(network_id: str, mode: str) -> dict | None:
+    if not db_available():
+        return None
+    try:
+        with _Session() as session:
+            row = (
+                session.query(ValidationMetrics)
+                .filter_by(network_id=network_id, mode=mode)
+                .order_by(ValidationMetrics.recorded_at.desc())
+                .first()
+            )
+            return row.full_validation if row else None
+    except SQLAlchemyError as exc:
+        logger.warning("DB read failed for validation metrics: %s", exc)
+        return None
+
+
 def seed_networks_from_file(data_file: Path) -> bool:
     """
     Populate the networks table from the JSON file if the table is currently empty.

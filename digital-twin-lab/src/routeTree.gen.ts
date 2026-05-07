@@ -16,7 +16,6 @@ import { Route as ResultsRouteImport } from './routes/results'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as ConversionToolsRouteImport } from './routes/conversion-tools'
 import { Route as ConnectionToolDevicesRouteImport } from './routes/connection-tool-devices'
-import { Route as ComparisonRouteImport } from './routes/comparison'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as NetworksIndexRouteImport } from './routes/networks.index'
 import { Route as NetworksNetworkIdRouteImport } from './routes/networks.$networkId'
@@ -56,11 +55,6 @@ const ConnectionToolDevicesRoute = ConnectionToolDevicesRouteImport.update({
   path: '/connection-tool-devices',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ComparisonRoute = ComparisonRouteImport.update({
-  id: '/comparison',
-  path: '/comparison',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -79,7 +73,6 @@ const NetworksNetworkIdRoute = NetworksNetworkIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/comparison': typeof ComparisonRoute
   '/connection-tool-devices': typeof ConnectionToolDevicesRoute
   '/conversion-tools': typeof ConversionToolsRoute
   '/dashboard': typeof DashboardRoute
@@ -92,7 +85,6 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/comparison': typeof ComparisonRoute
   '/connection-tool-devices': typeof ConnectionToolDevicesRoute
   '/conversion-tools': typeof ConversionToolsRoute
   '/dashboard': typeof DashboardRoute
@@ -106,7 +98,6 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/comparison': typeof ComparisonRoute
   '/connection-tool-devices': typeof ConnectionToolDevicesRoute
   '/conversion-tools': typeof ConversionToolsRoute
   '/dashboard': typeof DashboardRoute
@@ -121,7 +112,6 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/comparison'
     | '/connection-tool-devices'
     | '/conversion-tools'
     | '/dashboard'
@@ -134,7 +124,6 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/comparison'
     | '/connection-tool-devices'
     | '/conversion-tools'
     | '/dashboard'
@@ -147,7 +136,6 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
-    | '/comparison'
     | '/connection-tool-devices'
     | '/conversion-tools'
     | '/dashboard'
@@ -161,7 +149,6 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  ComparisonRoute: typeof ComparisonRoute
   ConnectionToolDevicesRoute: typeof ConnectionToolDevicesRoute
   ConversionToolsRoute: typeof ConversionToolsRoute
   DashboardRoute: typeof DashboardRoute
@@ -224,13 +211,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConnectionToolDevicesRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/comparison': {
-      id: '/comparison'
-      path: '/comparison'
-      fullPath: '/comparison'
-      preLoaderRoute: typeof ComparisonRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/': {
       id: '/'
       path: '/'
@@ -257,7 +237,6 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  ComparisonRoute: ComparisonRoute,
   ConnectionToolDevicesRoute: ConnectionToolDevicesRoute,
   ConversionToolsRoute: ConversionToolsRoute,
   DashboardRoute: DashboardRoute,

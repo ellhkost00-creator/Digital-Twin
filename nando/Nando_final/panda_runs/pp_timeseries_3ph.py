@@ -17,7 +17,16 @@ from pandapower.pf.runpp_3ph import runpp_3ph
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import config
 
-net = from_excel(str(config.NET_3PH_XLSX))
+from pandapower import from_json as _from_json, to_json as _to_json
+_json = Path(str(config.NET_3PH_JSON))
+_xlsx = Path(str(config.NET_3PH_XLSX))
+if _json.exists() and (_json.stat().st_mtime >= _xlsx.stat().st_mtime if _xlsx.exists() else True):
+    print("[CACHE] Loading 3ph pandapower network from JSON cache...")
+    net = _from_json(str(_json))
+else:
+    print("[CACHE] Loading 3ph pandapower network from Excel (will cache as JSON)...")
+    net = from_excel(str(_xlsx))
+    _to_json(net, str(_json))
 
 
 def parse_loadshapes_dss(loadshapes_path, base_dir):

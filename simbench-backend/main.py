@@ -15,8 +15,11 @@ import pandapower.timeseries as ts
 from contextlib import asynccontextmanager
 
 from db import (
-    db_available, get_db_network, get_db_networks,
-    get_db_runs, init_db, save_network, save_run, seed_networks_from_file,
+    db_available, get_db_network, get_db_networks, get_db_runs,
+    get_db_scenarios, save_scenario, delete_scenario,
+    get_db_users, save_user, update_user_role, delete_user, seed_users,
+    save_validation_metrics, get_latest_validation,
+    init_db, save_network, save_run, seed_networks_from_file,
 )
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,6 +35,8 @@ async def lifespan(app: FastAPI):
     # Seed networks table from JSON file if DB is available and table is empty.
     if DATA_FILE.exists():
         seed_networks_from_file(DATA_FILE)
+    # Seed 5 hardcoded users if users table is empty.
+    seed_users()
     yield
 
 
@@ -114,6 +119,27 @@ class SaveOpenDSSRequest(BaseModel):
 
 class OpenDSSRunRequest(BaseModel):
     day: int  # 1–365 day of year
+
+
+class CreateScenarioRequest(BaseModel):
+    id: str | None = None
+    name: str
+    network_id: str
+    sim_type: Literal["time_series"] = "time_series"
+    mode: Literal["balanced", "unbalanced"] = "balanced"
+    horizon: Literal["day", "week", "month"] = "day"
+    timestep: str = "15min"
+    created_by: str = "unknown"
+
+
+class CreateUserRequest(BaseModel):
+    name: str
+    email: str
+    role: Literal["admin", "researcher", "student"]
+
+
+class UpdateUserRoleRequest(BaseModel):
+    role: Literal["admin", "researcher", "student"]
 
 
 def load_networks():
@@ -674,6 +700,14 @@ def simulate_opendss(request: SimulateOpenDSSRequest):
 
     validation = _build_validation(metrics_dir, request.mode)
 
+    network_id_str = f"opendss-{request.network}-{request.mode}"
+    save_validation_metrics(
+        network_id=network_id_str,
+        mode=request.mode,
+        day=request.day,
+        validation=validation,
+    )
+
     return {
         "status": "completed",
         "network": request.network,
@@ -862,6 +896,98 @@ def run_opendss_simulation(network_id: str, request: OpenDSSRunRequest):
             ),
         },
     }
+
+
+@app.get("/scenarios")
+def list_scenarios():
+    return get_db_scenarios() or []
+
+
+@app.post("/scenarios", status_code=201)
+def create_scenario_endpoint(request: CreateScenarioRequest):
+    import time as _time
+    scenario_id = request.id or f"scn-{int(_time.time() * 1000)}"
+    result = save_scenario(
+        id=scenario_id,
+        name=request.name,
+        network_id=request.network_id,
+        sim_type=request.sim_type,
+        mode=request.mode,
+        horizon=request.horizon,
+        timestep=request.timestep,
+        created_by=request.created_by,
+    )
+    if result is None:
+        result = {
+            "id": scenario_id,
+            "name": request.name,
+            "networkId": request.network_id,
+            "simType": request.sim_type,
+            "mode": request.mode,
+            "horizon": request.horizon,
+            "timestep": request.timestep,
+            "createdBy": request.created_by,
+            "createdAt": datetime.now().strftime("%Y-%m-%d"),
+        }
+    return result
+
+
+@app.delete("/scenarios/{scenario_id}", status_code=204)
+def delete_scenario_endpoint(scenario_id: str):
+    delete_scenario(scenario_id)
+
+
+@app.get("/users")
+def list_users():
+    return get_db_users() or []
+
+
+def _make_initials(name: str) -> str:
+    parts = name.strip().split()
+    parts = [p for p in parts if p]
+    if not parts:
+        return "?"
+    if len(parts) == 1:
+        return parts[0][:2].upper()
+    return (parts[0][0] + parts[-1][0]).upper()
+
+
+@app.post("/users")
+def create_user_endpoint(request: CreateUserRequest):
+    import time as _time
+    user_id = f"u-{int(_time.time() * 1000)}"
+    initials = _make_initials(request.name)
+    save_user(id=user_id, name=request.name, email=request.email,
+              role=request.role, initials=initials)
+    return get_db_users() or []
+
+
+@app.put("/users/{user_id}/role")
+def update_user_role_endpoint(user_id: str, request: UpdateUserRoleRequest):
+    update_user_role(user_id, request.role)
+    return get_db_users() or []
+
+
+@app.delete("/users/{user_id}", status_code=204)
+def delete_user_endpoint(user_id: str):
+    delete_user(user_id)
+
+
+@app.get("/runs/{run_id}/validation")
+def get_run_validation(run_id: str):
+    runs = get_db_runs()
+    if runs is None:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    run = next((r for r in runs if r["run_id"] == run_id), None)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    network_id = run["network_id"]
+    parts = network_id.split("-")
+    mode = parts[2] if len(parts) == 3 else "balanced"
+    result = get_latest_validation(network_id, mode)
+    if result is None:
+        raise HTTPException(status_code=404, detail="No validation metrics for this run")
+    return result
 
 
 @app.get("/")

@@ -20,7 +20,6 @@ import {
   Upload,
   FlaskConical,
   ChartSpline,
-  GitCompare,
   CheckCircle2,
   XCircle,
   ArrowRight,
@@ -229,7 +228,6 @@ function Dashboard() {
     { key: "run", label: "Start New Run", icon: PlayCircle, to: "/scenarios" as const },
     { key: "results", label: "Analytics", icon: ChartSpline, to: "/results" as const },
     { key: "violations", label: "Run Violation Detection", icon: AlertTriangle, to: "/results" as const },
-    { key: "comparison", label: "Comparison", icon: GitCompare, to: "/comparison" as const },
     { key: "conversion", label: "Conversion Tools", icon: Wrench, to: "/conversion-tools" as const },
     { key: "users", label: "Manage Users", icon: UsersIcon, to: "/users" as const },
     { key: "library", label: "Open Network Library", icon: NetIcon, to: "/networks" as const },
@@ -237,9 +235,9 @@ function Dashboard() {
   ];
 
   const actionsByRole: Record<string, string[]> = {
-    admin: ["upload", "scenario", "run", "results", "violations", "comparison", "conversion", "users"],
-    researcher: ["upload", "scenario", "run", "results", "violations", "comparison", "conversion"],
-    student: ["upload", "run", "results", "violations", "comparison"],
+    admin: ["upload", "scenario", "run", "results", "violations", "conversion", "users"],
+    researcher: ["upload", "scenario", "run", "results", "violations", "conversion"],
+    student: ["upload", "run", "results", "violations"],
   };
 
   const allowedKeys = role ? actionsByRole[role] ?? [] : [];
@@ -250,9 +248,9 @@ function Dashboard() {
   const recentRuns = runs.slice(0, 6);
 
   const allowedRoutes: Record<string, Set<string>> = {
-    admin: new Set(["/dashboard", "/networks", "/scenarios", "/runs", "/results", "/comparison", "/conversion-tools", "/users"]),
-    researcher: new Set(["/dashboard", "/networks", "/scenarios", "/runs", "/results", "/comparison", "/conversion-tools"]),
-    student: new Set(["/dashboard", "/networks", "/runs", "/results", "/comparison"]),
+    admin: new Set(["/dashboard", "/networks", "/scenarios", "/runs", "/results", "/conversion-tools", "/users"]),
+    researcher: new Set(["/dashboard", "/networks", "/scenarios", "/runs", "/results", "/conversion-tools"]),
+    student: new Set(["/dashboard", "/networks", "/runs", "/results"]),
   };
   const canAccess = (to: string) => (role ? allowedRoutes[role]?.has(to) ?? false : false);
 

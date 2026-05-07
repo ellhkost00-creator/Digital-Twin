@@ -7,7 +7,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import config
 
-net = from_excel(str(config.NET_PP_XLSX))
+from pandapower import from_json as _from_json, to_json as _to_json
+_xlsx = Path(str(config.NET_PP_XLSX))
+_json = _xlsx.with_suffix(".json")
+if _json.exists() and _json.stat().st_mtime >= _xlsx.stat().st_mtime:
+    print("[CACHE] Loading pandapower network from JSON cache...")
+    net = _from_json(str(_json))
+else:
+    print("[CACHE] Loading pandapower network from Excel (will cache as JSON)...")
+    net = from_excel(str(_xlsx))
+    _to_json(net, str(_json))
 
 import pandapower as pp
 from pandapower import from_excel

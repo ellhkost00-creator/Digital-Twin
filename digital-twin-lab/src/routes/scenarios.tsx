@@ -15,7 +15,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { scenarios as initialScenarios, type Scenario } from "@/lib/mock-data";
+import type { Scenario } from "@/lib/mock-data";
+import { useScenarios, createScenario } from "@/lib/scenarios-store";
 import { createRun, removeRun } from "@/lib/runs-store";
 import { useNetworks } from "@/lib/networks-store";
 import {
@@ -72,6 +73,7 @@ function dayToSeason(day: number): string {
 
 function ScenarioBuilder() {
   const networks = useNetworks();
+  const scenarios = useScenarios();
   const { networkId: presetNetworkId } = Route.useSearch();
 
   const [name, setName] = useState("New scenario");
@@ -120,7 +122,7 @@ function ScenarioBuilder() {
       createdBy: "E. Marchetti",
       createdAt: new Date().toISOString().slice(0, 10),
     };
-    initialScenarios.unshift(pendingScenario);
+    await createScenario(pendingScenario);
     createRun({
       scenarioId: pendingScenario.id,
       scenarioName: pendingScenario.name,
@@ -548,7 +550,7 @@ function ScenarioBuilder() {
           <Card className="p-5">
             <div className="text-sm font-semibold mb-3">Recent scenarios</div>
             <div className="space-y-2 text-sm">
-              {initialScenarios.slice(0, 6).map((s) => (
+              {scenarios.slice(0, 6).map((s) => (
                 <div
                   key={s.id}
                   className="flex items-center justify-between gap-2 py-1.5 border-b border-border/60 last:border-0"

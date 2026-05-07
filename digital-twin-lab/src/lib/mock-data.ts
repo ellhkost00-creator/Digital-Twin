@@ -94,35 +94,4 @@ export interface Violation {
 
 export const violations: Violation[] = [];
 
-// Shared types for comparison / component-explorer panels (computed at the
-// call-site from real backend data — no mock generators are exported here).
-export type CompareMetric = "voltage" | "line_loading" | "trafo_loading";
-
-export interface CompareSeriesPoint {
-  hour: string;
-  runA: number;
-  runB: number;
-  absError: number;
-}
-
-export interface CompareSummary {
-  mae: number;
-  rmse: number;
-  max: number;
-  bias: number;
-  unit: string;
-}
-
-export interface CompareResult {
-  series: CompareSeriesPoint[];
-  histogram: { bin: string; count: number }[];
-  summary: CompareSummary;
-}
-
-export interface ComparisonBundle {
-  voltage: CompareResult;
-  line_loading: CompareResult;
-  trafo_loading: CompareResult;
-}
-
 export type ComponentType = "bus" | "line" | "transformer";

@@ -5,7 +5,6 @@ import {
   ArrowRight,
   PlayCircle,
   AlertTriangle,
-  GitCompare,
   Network,
   HardHat,
   Book,
@@ -31,7 +30,6 @@ export const Route = createFileRoute("/")({
 const features = [
   { icon: PlayCircle, title: "Power-flow & time-series", desc: "Run balanced and unbalanced studies on MV/LV grids." },
   { icon: AlertTriangle, title: "Violation detection", desc: "Auto-flag voltage and overload limits across runs." },
-  { icon: GitCompare, title: "Scenario comparison", desc: "Diff baselines vs. what-if cases with rich metrics." },
   { icon: Network, title: "Network library", desc: "Curated benchmarks and your own pandapower models." },
 ];
 

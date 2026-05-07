@@ -1,4 +1,5 @@
 import type { Role } from "./auth";
+import { fetchUsers, createUserApi, updateUserRoleApi, deleteUserApi } from "./api";
 
 export interface ManagedUser {
   id: string;
@@ -9,16 +10,17 @@ export interface ManagedUser {
   isSelf?: boolean;
 }
 
-const STORAGE_KEY = "dtlab.users";
 const EVENT = "dtlab-users-change";
 
-const seed: ManagedUser[] = [
-  { id: "u-1", name: "Marco Rossi", email: "marco.rossi@dtlab.io", role: "admin", initials: "MR", isSelf: true },
+const _seed: ManagedUser[] = [
+  { id: "u-1", name: "Marco Rossi",         email: "marco.rossi@dtlab.io",     role: "admin",      initials: "MR", isSelf: true },
   { id: "u-2", name: "Dr. Elena Marchetti", email: "elena.marchetti@dtlab.io", role: "researcher", initials: "EM" },
-  { id: "u-3", name: "Sofia Bianchi", email: "sofia.bianchi@dtlab.io", role: "student", initials: "SB" },
-  { id: "u-4", name: "Luca Conti", email: "luca.conti@dtlab.io", role: "student", initials: "LC" },
-  { id: "u-5", name: "Giulia Ferrari", email: "giulia.ferrari@dtlab.io", role: "researcher", initials: "GF" },
+  { id: "u-3", name: "Sofia Bianchi",        email: "sofia.bianchi@dtlab.io",  role: "student",    initials: "SB" },
+  { id: "u-4", name: "Luca Conti",           email: "luca.conti@dtlab.io",     role: "student",    initials: "LC" },
+  { id: "u-5", name: "Giulia Ferrari",       email: "giulia.ferrari@dtlab.io", role: "researcher", initials: "GF" },
 ];
+
+let _users: ManagedUser[] = [..._seed];
 
 export function getInitials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -27,60 +29,74 @@ export function getInitials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-export function getUsers(): ManagedUser[] {
-  if (typeof window === "undefined") return seed;
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(seed));
-      return seed;
-    }
-    return JSON.parse(raw) as ManagedUser[];
-  } catch {
-    return seed;
-  }
-}
-
-function persist(users: ManagedUser[]) {
+function emit() {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(users));
   window.dispatchEvent(new Event(EVENT));
 }
 
-export function setUsers(users: ManagedUser[]) {
-  persist(users);
+export function getUsers(): ManagedUser[] {
+  return _users;
 }
 
-export function addUser(input: { name: string; email: string; role: Role }): ManagedUser {
-  const users = getUsers();
-  const existing = users.find((u) => u.email.toLowerCase() === input.email.toLowerCase());
+export async function loadUsersFromBackend(): Promise<void> {
+  try {
+    const data = await fetchUsers();
+    if (data.length > 0) {
+      _users = data as ManagedUser[];
+      emit();
+    }
+  } catch {
+    // DB unavailable — keep seed data
+  }
+}
+
+export async function addUser(input: { name: string; email: string; role: Role }): Promise<ManagedUser> {
+  const existing = _users.find((u) => u.email.toLowerCase() === input.email.toLowerCase());
   if (existing) return existing;
-  const user: ManagedUser = {
+
+  const localUser: ManagedUser = {
     id: `u-${Date.now()}`,
     name: input.name,
     email: input.email,
     role: input.role,
     initials: getInitials(input.name),
   };
-  persist([...users, user]);
-  return user;
+
+  try {
+    const data = await createUserApi(input);
+    _users = data as ManagedUser[];
+    emit();
+    return _users.find((u) => u.email.toLowerCase() === input.email.toLowerCase()) ?? localUser;
+  } catch {
+    _users = [..._users, localUser];
+    emit();
+    return localUser;
+  }
 }
 
-export function removeUser(id: string) {
-  persist(getUsers().filter((u) => u.id !== id));
+export async function removeUser(id: string): Promise<void> {
+  try {
+    await deleteUserApi(id);
+  } catch {
+    // DB unavailable — remove from memory anyway
+  }
+  _users = _users.filter((u) => u.id !== id);
+  emit();
 }
 
-export function updateUserRole(id: string, role: Role) {
-  persist(getUsers().map((u) => (u.id === id ? { ...u, role } : u)));
+export async function updateUserRole(id: string, role: Role): Promise<void> {
+  try {
+    const data = await updateUserRoleApi(id, role);
+    _users = data as ManagedUser[];
+  } catch {
+    _users = _users.map((u) => (u.id === id ? { ...u, role } : u));
+  }
+  emit();
 }
 
 export function subscribeUsers(cb: () => void): () => void {
   if (typeof window === "undefined") return () => {};
   const handler = () => cb();
   window.addEventListener(EVENT, handler);
-  window.addEventListener("storage", handler);
-  return () => {
-    window.removeEventListener(EVENT, handler);
-    window.removeEventListener("storage", handler);
-  };
+  return () => { window.removeEventListener(EVENT, handler); };
 }

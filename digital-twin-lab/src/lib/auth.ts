@@ -10,7 +10,6 @@ export type RouteKey =
   | "/scenarios"
   | "/runs"
   | "/results"
-  | "/comparison"
   | "/conversion-tools"
   | "/connection-tool-devices"
   | "/users";
@@ -22,7 +21,6 @@ export const rolePermissions: Record<Role, RouteKey[]> = {
     "/scenarios",
     "/runs",
     "/results",
-    "/comparison",
     "/conversion-tools",
     "/connection-tool-devices",
     "/users",
@@ -33,11 +31,10 @@ export const rolePermissions: Record<Role, RouteKey[]> = {
     "/scenarios",
     "/runs",
     "/results",
-    "/comparison",
     "/conversion-tools",
     "/connection-tool-devices",
   ],
-  student: ["/dashboard", "/networks", "/runs", "/results", "/comparison"],
+  student: ["/dashboard", "/networks", "/runs", "/results"],
 };
 
 export function getCurrentRole(): Role | null {

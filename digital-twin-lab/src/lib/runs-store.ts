@@ -3,10 +3,10 @@
 import { useSyncExternalStore } from "react";
 import {
   runs as runsArray,
-  scenarios,
   networks,
   type Run,
 } from "./mock-data";
+import { getAllScenarios } from "./scenarios-store";
 import { fetchRuns } from "./api";
 import { parseRunId } from "./run-context";
 
@@ -157,7 +157,7 @@ export function removeRun(id: string): void {
 }
 
 export function createRun(input: CreateRunInput): string {
-  const scn = scenarios.find((s) => s.id === input.scenarioId);
+  const scn = getAllScenarios().find((s) => s.id === input.scenarioId);
   const net = scn ? networks.find((n) => n.id === scn.networkId) : undefined;
   const id = input.runId ?? nextRunId();
 

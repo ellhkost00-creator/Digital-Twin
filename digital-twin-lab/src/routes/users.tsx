@@ -53,15 +53,23 @@ function UsersPage() {
     return subscribeUsers(() => setUsers(getUsers()));
   }, []);
 
-  const handleRoleChange = (id: string, newRole: Role) => {
-    updateUserRole(id, newRole);
-    toast.success("User role updated");
+  const handleRoleChange = async (id: string, newRole: Role) => {
+    try {
+      await updateUserRole(id, newRole);
+      toast.success("User role updated");
+    } catch {
+      toast.error("Failed to update user role");
+    }
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (!pendingDelete) return;
-    removeUser(pendingDelete.id);
-    toast.success(`${pendingDelete.name} removed`);
+    try {
+      await removeUser(pendingDelete.id);
+      toast.success(`${pendingDelete.name} removed`);
+    } catch {
+      toast.error("Failed to remove user");
+    }
     setPendingDelete(null);
   };
 

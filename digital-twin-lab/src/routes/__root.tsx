@@ -1,4 +1,7 @@
 import { Outlet, Link, createRootRoute, HeadContent, Scripts } from "@tanstack/react-router";
+import { useEffect } from "react";
+import { seedScenariosFromBackend } from "@/lib/scenarios-store";
+import { loadUsersFromBackend } from "@/lib/users-store";
 
 import appCss from "../styles.css?url";
 
@@ -65,5 +68,10 @@ function RootShell({ children }: { children: React.ReactNode }) {
 }
 
 function RootComponent() {
+  useEffect(() => {
+    seedScenariosFromBackend();
+    loadUsersFromBackend();
+  }, []);
+
   return <Outlet />;
 }

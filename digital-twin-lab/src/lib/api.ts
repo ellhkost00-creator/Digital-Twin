@@ -336,3 +336,108 @@ export async function convertOpenDSS(
 
   return response.json();
 }
+
+// ── Scenarios ────────────────────────────────────────────────────────────────
+
+export interface ScenarioApi {
+  id: string;
+  name: string;
+  networkId: string;
+  simType: string;
+  mode: string;
+  horizon: string;
+  timestep: string;
+  createdBy: string;
+  createdAt: string;
+}
+
+export async function fetchScenarios(): Promise<ScenarioApi[]> {
+  const res = await fetch(`${API_BASE}/scenarios`);
+  if (!res.ok) throw new Error(`Failed to fetch scenarios (${res.status})`);
+  return res.json();
+}
+
+export async function createScenarioApi(input: {
+  id: string;
+  name: string;
+  networkId: string;
+  simType: string;
+  mode: string;
+  horizon: string;
+  timestep: string;
+  createdBy: string;
+}): Promise<ScenarioApi> {
+  const res = await fetch(`${API_BASE}/scenarios`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      id: input.id,
+      name: input.name,
+      network_id: input.networkId,
+      sim_type: input.simType,
+      mode: input.mode,
+      horizon: input.horizon,
+      timestep: input.timestep,
+      created_by: input.createdBy,
+    }),
+  });
+  if (!res.ok) throw new Error(`Failed to create scenario (${res.status})`);
+  return res.json();
+}
+
+export async function deleteScenarioApi(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/scenarios/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!res.ok && res.status !== 204) throw new Error(`Failed to delete scenario (${res.status})`);
+}
+
+// ── Users ────────────────────────────────────────────────────────────────────
+
+export interface ManagedUserApi {
+  id: string;
+  name: string;
+  email: string;
+  role: "admin" | "researcher" | "student";
+  initials: string;
+  isSelf?: boolean;
+}
+
+export async function fetchUsers(): Promise<ManagedUserApi[]> {
+  const res = await fetch(`${API_BASE}/users`);
+  if (!res.ok) throw new Error(`Failed to fetch users (${res.status})`);
+  return res.json();
+}
+
+export async function createUserApi(input: {
+  name: string;
+  email: string;
+  role: string;
+}): Promise<ManagedUserApi[]> {
+  const res = await fetch(`${API_BASE}/users`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) throw new Error(`Failed to create user (${res.status})`);
+  return res.json();
+}
+
+export async function updateUserRoleApi(id: string, role: string): Promise<ManagedUserApi[]> {
+  const res = await fetch(`${API_BASE}/users/${encodeURIComponent(id)}/role`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role }),
+  });
+  if (!res.ok) throw new Error(`Failed to update user role (${res.status})`);
+  return res.json();
+}
+
+export async function deleteUserApi(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/users/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!res.ok && res.status !== 204) throw new Error(`Failed to delete user (${res.status})`);
+}
+
+export async function fetchRunValidation(runId: string): Promise<SimulationValidation | null> {
+  const res = await fetch(`${API_BASE}/runs/${encodeURIComponent(runId)}/validation`);
+  if (!res.ok) return null;
+  return res.json();
+}

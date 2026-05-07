@@ -12,7 +12,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { networks, scenarios } from "@/lib/mock-data";
+import { networks } from "@/lib/mock-data";
+import { getAllScenarios } from "@/lib/scenarios-store";
 import { useRuns } from "@/lib/runs-store";
 import { API_BASE, fetchResultEnvelope, fetchResultColumn, type EnvelopeResult } from "@/lib/api";
 import {
@@ -93,7 +94,7 @@ function Results() {
     ? runs.find((r) => r.id === incomingRunId && r.status === "completed")
     : undefined;
   const incomingScenario = incomingRun
-    ? scenarios.find((s) => s.id === incomingRun.scenarioId)
+    ? getAllScenarios().find((s) => s.id === incomingRun.scenarioId)
     : undefined;
 
   const [networkId, setNetworkId] = useState<string>(
@@ -114,7 +115,7 @@ function Results() {
   const completed = runs.filter((r) => r.status === "completed");
   const networkRuns = completed.filter((r) => {
     if (!networkId) return true;
-    const scn = scenarios.find((s) => s.id === r.scenarioId);
+    const scn = getAllScenarios().find((s) => s.id === r.scenarioId);
     const rNetworkId = scn?.networkId ?? (r as typeof r & { networkId?: string }).networkId;
     return rNetworkId === networkId;
   });
@@ -166,7 +167,7 @@ function Results() {
     if (!incomingRun) return;
     if (autoLoadedRef.current === incomingRun.id) return;
     autoLoadedRef.current = incomingRun.id;
-    const scn = scenarios.find((s) => s.id === incomingRun.scenarioId);
+    const scn = getAllScenarios().find((s) => s.id === incomingRun.scenarioId);
     const resolvedNetworkId =
       scn?.networkId ??
       (incomingRun as (typeof incomingRun) & { networkId?: string })?.networkId;
@@ -351,7 +352,7 @@ function Results() {
           </div>
 
           {/* Topology overview + Current Results View side by side */}
-          <div className="grid gap-6 lg:grid-cols-[2fr_1fr] mb-6">
+          <div className="grid gap-3 lg:grid-cols-[2fr_1fr] mb-6">
             <NetworkTopology
               networkName={selectedNetwork?.name ?? "Network"}
               networkId={selectedNetwork?.id ?? null}
@@ -503,7 +504,7 @@ function NetworkTopology({
 
   return (
     <Card className={cn("p-0 flex flex-col", isOpenDSS ? "overflow-auto" : "overflow-hidden")}
-      style={isOpenDSS ? undefined : { height: 640 }}>
+      style={isOpenDSS ? undefined : { height: 720 }}>
       <div className="flex items-center justify-between px-5 pt-5 pb-3 shrink-0">
         <div className="text-sm font-semibold">Topology overview</div>
         <div className="text-xs text-muted-foreground">{networkName}</div>
@@ -514,7 +515,7 @@ function NetworkTopology({
             key={src}
             src={src}
             title={`${networkName} topology`}
-            style={{ width: 900, height: 600, border: 0, display: "block" }}
+            style={{ width: 900, height: 720, border: 0, display: "block" }}
             scrolling="no"
             onError={() => setFailed(true)}
           />
