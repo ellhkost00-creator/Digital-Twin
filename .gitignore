@@ -2,3 +2,13 @@ simbench-backend/data/results/
 simbench-backend/data/plots/
 nando/Nando_final/results/
 simbench-backend/data/networks/*/results/
+
+**/node_modules/
+**/.venv/
+**/venv/
+**/__pycache__/
+**/dist/
+**/build/
+**/.pytest_cache/
+*.pyc
+*.log
