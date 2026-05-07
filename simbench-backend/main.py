@@ -858,6 +858,15 @@ def run_opendss_simulation(network_id: str, request: OpenDSSRunRequest):
                 shutil.rmtree(dst)
             shutil.copytree(src, dst)
 
+    if mode == "unbalanced":
+        for sub in ["res_bus_3ph", "res_line_3ph"]:
+            src = src_dir / sub
+            if src.exists():
+                dst = out_dir / sub
+                if dst.exists():
+                    shutil.rmtree(dst)
+                shutil.copytree(src, dst)
+
     has_trafo = (out_dir / "res_trafo").exists()
     v = compute_violation_counts(out_dir, has_trafo)
 
@@ -1193,6 +1202,19 @@ _KIND_TO_PATH: dict[str, tuple[str, str]] = {
     "trafo-loading":("res_trafo", "loading_percent.csv"),
 }
 
+_KIND_TO_3PH_PATH: dict[str, list[tuple[str, str, str]]] = {
+    "vm-pu": [
+        ("a", "res_bus_3ph",  "vm_a_pu.csv"),
+        ("b", "res_bus_3ph",  "vm_b_pu.csv"),
+        ("c", "res_bus_3ph",  "vm_c_pu.csv"),
+    ],
+    "line-loading": [
+        ("a", "res_line_3ph", "loading_a_percent.csv"),
+        ("b", "res_line_3ph", "loading_b_percent.csv"),
+        ("c", "res_line_3ph", "loading_c_percent.csv"),
+    ],
+}
+
 
 def _load_result_df(network_id: str, run_id: str, kind: str) -> pd.DataFrame:
     entry = _KIND_TO_PATH.get(kind)
@@ -1216,6 +1238,27 @@ def get_result_envelope(network_id: str, run_id: str, kind: str):
         "columns": df.columns.tolist(),
         "n_rows":  len(df),
     }
+
+
+@app.get("/networks/{network_id}/results/{run_id}/{kind}/phases")
+def get_result_phases(network_id: str, run_id: str, kind: str):
+    """Return per-phase per-timestep min/mean/max for unbalanced OpenDSS runs."""
+    entries = _KIND_TO_3PH_PATH.get(kind)
+    if not entries:
+        raise HTTPException(status_code=400, detail=f"No phase data available for kind '{kind}'")
+    result: dict[str, dict] = {}
+    for phase, sub, fname in entries:
+        path = RESULTS_DIR / network_id / run_id / sub / fname
+        if not path.exists():
+            raise HTTPException(status_code=404, detail=f"Phase {phase.upper()} data not found ({sub}/{fname})")
+        df = pd.read_csv(path, sep=";", index_col=0)
+        result[phase] = {
+            "mean":   [round(v, 6) for v in df.mean(axis=1).tolist()],
+            "max":    [round(v, 6) for v in df.max(axis=1).tolist()],
+            "min":    [round(v, 6) for v in df.min(axis=1).tolist()],
+            "n_rows": len(df),
+        }
+    return result
 
 
 @app.get("/networks/{network_id}/results/{run_id}/{kind}/column/{col_name:path}")

@@ -15,7 +15,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { networks } from "@/lib/mock-data";
 import { getAllScenarios } from "@/lib/scenarios-store";
 import { useRuns } from "@/lib/runs-store";
-import { API_BASE, fetchResultEnvelope, fetchResultColumn, type EnvelopeResult } from "@/lib/api";
+import { API_BASE, fetchResultEnvelope, fetchResultColumn, fetchResultPhases, type EnvelopeResult, type PhasesResult } from "@/lib/api";
 import {
   ResponsiveContainer,
   LineChart,
@@ -550,16 +550,49 @@ interface EnvState {
   data: EnvelopeResult | null;
 }
 
-function useResultEnvelope(networkId: string, runId: string, kind: ResultKind): EnvState {
+interface PhaseState {
+  loading: boolean;
+  error: string | null;
+  data: PhasesResult | null;
+}
+
+const PHASE_COLORS = {
+  a: "oklch(0.58 0.22 25)",
+  b: "oklch(0.62 0.16 150)",
+  c: "oklch(0.55 0.20 260)",
+};
+
+function useResultEnvelope(networkId: string, runId: string, kind: ResultKind, enabled = true): EnvState {
   const [state, setState] = useState<EnvState>({ loading: true, error: null, data: null });
   useEffect(() => {
+    if (!enabled) {
+      setState({ loading: false, error: null, data: null });
+      return;
+    }
     let cancelled = false;
     setState({ loading: true, error: null, data: null });
     fetchResultEnvelope(networkId, runId, kind)
       .then((d) => { if (!cancelled) setState({ loading: false, error: null, data: d }); })
       .catch((e: Error) => { if (!cancelled) setState({ loading: false, error: e.message, data: null }); });
     return () => { cancelled = true; };
-  }, [networkId, runId, kind]);
+  }, [networkId, runId, kind, enabled]);
+  return state;
+}
+
+function useResultPhases(networkId: string, runId: string, kind: ResultKind, enabled: boolean): PhaseState {
+  const [state, setState] = useState<PhaseState>({ loading: true, error: null, data: null });
+  useEffect(() => {
+    if (!enabled) {
+      setState({ loading: false, error: null, data: null });
+      return;
+    }
+    let cancelled = false;
+    setState({ loading: true, error: null, data: null });
+    fetchResultPhases(networkId, runId, kind)
+      .then((d) => { if (!cancelled) setState({ loading: false, error: null, data: d }); })
+      .catch((e: Error) => { if (!cancelled) setState({ loading: false, error: e.message, data: null }); });
+    return () => { cancelled = true; };
+  }, [networkId, runId, kind, enabled]);
   return state;
 }
 
@@ -572,17 +605,45 @@ function fmtEnv(state: EnvState, mode: "min" | "max", decimals: number): string 
   return Number.isFinite(v) ? v.toFixed(decimals) : "N/A";
 }
 
+function phaseGlobalMin(state: PhaseState, decimals: number): string {
+  if (state.loading) return "…";
+  if (state.error || !state.data) return "N/A";
+  const { a, b, c } = state.data;
+  const v = Math.min(...a.min, ...b.min, ...c.min);
+  return Number.isFinite(v) ? v.toFixed(decimals) : "N/A";
+}
+
+function phaseGlobalMax(state: PhaseState, decimals: number): string {
+  if (state.loading) return "…";
+  if (state.error || !state.data) return "N/A";
+  const { a, b, c } = state.data;
+  const v = Math.max(...a.max, ...b.max, ...c.max);
+  return Number.isFinite(v) ? v.toFixed(decimals) : "N/A";
+}
+
 function RealKpiCards({ ctx }: { ctx: StoredSimulationResult }) {
-  const vm = useResultEnvelope(ctx.networkId, ctx.runId, "vm-pu");
-  const ll = useResultEnvelope(ctx.networkId, ctx.runId, "line-loading");
+  const isUnbalanced = ctx.networkId.endsWith("-unbalanced");
+
+  const vm = useResultEnvelope(ctx.networkId, ctx.runId, "vm-pu", !isUnbalanced);
+  const ll = useResultEnvelope(ctx.networkId, ctx.runId, "line-loading", !isUnbalanced);
   const tl = useResultEnvelope(ctx.networkId, ctx.runId, "trafo-loading");
 
-  const cards = [
-    { label: "Min voltage",      value: fmtEnv(vm, "min", 4), unit: "pu", icon: TrendingDown, tone: "text-destructive" },
-    { label: "Max voltage",      value: fmtEnv(vm, "max", 4), unit: "pu", icon: TrendingUp,   tone: "text-warning-foreground" },
-    { label: "Max line loading", value: fmtEnv(ll, "max", 1), unit: "%",  icon: Cable,        tone: "text-info" },
-    { label: "Max trafo loading",value: fmtEnv(tl, "max", 1), unit: "%",  icon: Zap,          tone: "text-primary" },
-  ];
+  const vmPhases = useResultPhases(ctx.networkId, ctx.runId, "vm-pu", isUnbalanced);
+  const llPhases = useResultPhases(ctx.networkId, ctx.runId, "line-loading", isUnbalanced);
+
+  const cards = isUnbalanced
+    ? [
+        { label: "Min voltage",      value: phaseGlobalMin(vmPhases, 4), unit: "pu", icon: TrendingDown, tone: "text-destructive" },
+        { label: "Max voltage",      value: phaseGlobalMax(vmPhases, 4), unit: "pu", icon: TrendingUp,   tone: "text-warning-foreground" },
+        { label: "Max line loading", value: phaseGlobalMax(llPhases, 1), unit: "%",  icon: Cable,        tone: "text-info" },
+        { label: "Max trafo loading",value: fmtEnv(tl, "max", 1),        unit: "%",  icon: Zap,          tone: "text-primary" },
+      ]
+    : [
+        { label: "Min voltage",      value: fmtEnv(vm, "min", 4), unit: "pu", icon: TrendingDown, tone: "text-destructive" },
+        { label: "Max voltage",      value: fmtEnv(vm, "max", 4), unit: "pu", icon: TrendingUp,   tone: "text-warning-foreground" },
+        { label: "Max line loading", value: fmtEnv(ll, "max", 1), unit: "%",  icon: Cable,        tone: "text-info" },
+        { label: "Max trafo loading",value: fmtEnv(tl, "max", 1), unit: "%",  icon: Zap,          tone: "text-primary" },
+      ];
 
   return (
     <div className="grid gap-4 grid-cols-2 lg:grid-cols-4 mb-6">
@@ -612,11 +673,15 @@ function RealKpiCards({ ctx }: { ctx: StoredSimulationResult }) {
 }
 
 function RealResultsTabs({ ctx }: { ctx: StoredSimulationResult }) {
-  const vm = useResultEnvelope(ctx.networkId, ctx.runId, "vm-pu");
-  const ll = useResultEnvelope(ctx.networkId, ctx.runId, "line-loading");
+  const isUnbalanced = ctx.networkId.endsWith("-unbalanced");
+  const isOpenDSS    = ctx.networkId.startsWith("opendss-");
+
+  const vm = useResultEnvelope(ctx.networkId, ctx.runId, "vm-pu", !isUnbalanced);
+  const ll = useResultEnvelope(ctx.networkId, ctx.runId, "line-loading", !isUnbalanced);
   const tl = useResultEnvelope(ctx.networkId, ctx.runId, "trafo-loading");
 
-  const isOpenDSS = ctx.networkId.startsWith("opendss-");
+  const vmPhases = useResultPhases(ctx.networkId, ctx.runId, "vm-pu", isUnbalanced);
+  const llPhases = useResultPhases(ctx.networkId, ctx.runId, "line-loading", isUnbalanced);
 
   return (
     <Tabs defaultValue="voltages">
@@ -630,18 +695,32 @@ function RealResultsTabs({ ctx }: { ctx: StoredSimulationResult }) {
       <TabsContent value="voltages" className="mt-4">
         <EnvelopeChart
           title="Bus voltage envelope"
-          subtitle={isOpenDSS ? "Mean vm_pu across all buses" : "Min / mean / max vm_pu across all buses"}
+          subtitle={
+            isUnbalanced
+              ? "Mean vm_pu per phase (A / B / C) across all buses"
+              : isOpenDSS
+              ? "Mean vm_pu across all buses"
+              : "Min / mean / max vm_pu across all buses"
+          }
           state={vm} ctx={ctx} unit=" pu" yDomain={[0.9, 1.1]} showMin
-          meanOnly={isOpenDSS}
+          meanOnly={isOpenDSS && !isUnbalanced}
+          phaseState={isUnbalanced ? vmPhases : undefined}
           thresholds={[{ y: 0.94, label: "0.94" }, { y: 1.06, label: "1.06" }]}
         />
       </TabsContent>
       <TabsContent value="lines" className="mt-4">
         <EnvelopeChart
           title="Line loading"
-          subtitle={isOpenDSS ? "Mean loading_percent across all lines" : "Mean / max loading_percent across all lines"}
+          subtitle={
+            isUnbalanced
+              ? "Mean loading_percent per phase (A / B / C) across all lines"
+              : isOpenDSS
+              ? "Mean loading_percent across all lines"
+              : "Mean / max loading_percent across all lines"
+          }
           state={ll} ctx={ctx} unit="%" yDomain={[0, "auto"]}
-          meanOnly={isOpenDSS}
+          meanOnly={isOpenDSS && !isUnbalanced}
+          phaseState={isUnbalanced ? llPhases : undefined}
           thresholds={[{ y: 100, label: "100%" }]}
         />
       </TabsContent>
@@ -671,9 +750,10 @@ interface EnvelopeChartProps {
   showMin?: boolean;
   meanOnly?: boolean;
   thresholds: { y: number; label: string }[];
+  phaseState?: PhaseState;
 }
 
-function EnvelopeChart({ title, subtitle, state, ctx, unit, yDomain, showMin, meanOnly, thresholds }: EnvelopeChartProps) {
+function EnvelopeChart({ title, subtitle, state, ctx, unit, yDomain, showMin, meanOnly, thresholds, phaseState }: EnvelopeChartProps) {
   const tooltipStyle = {
     backgroundColor: "var(--card)",
     border: "1px solid var(--border)",
@@ -682,6 +762,7 @@ function EnvelopeChart({ title, subtitle, state, ctx, unit, yDomain, showMin, me
   };
 
   const stepMinutes = ctx.networkId.startsWith("opendss-") ? 30 : 15;
+  const usePhaseData = !!phaseState;
 
   const data = useMemo(() => {
     if (!state.data) return [];
@@ -697,22 +778,48 @@ function EnvelopeChart({ title, subtitle, state, ctx, unit, yDomain, showMin, me
     }));
   }, [state.data, ctx, stepMinutes]);
 
-  const isVoltage = unit === " pu";
+  const phaseData = useMemo(() => {
+    if (!phaseState?.data) return [];
+    const { a, b, c } = phaseState.data;
+    const n = a.mean.length;
+    const ts = generateTimestamps(ctx, n, stepMinutes);
+    return Array.from({ length: n }, (_, i) => ({
+      t: ts[i].getTime(),
+      label: formatAxisTick(ts[i], ctx.horizon),
+      full: formatFullTimestamp(ts[i]),
+      meanA: Number.isFinite(a.mean[i]) ? +a.mean[i].toFixed(4) : null,
+      meanB: Number.isFinite(b.mean[i]) ? +b.mean[i].toFixed(4) : null,
+      meanC: Number.isFinite(c.mean[i]) ? +c.mean[i].toFixed(4) : null,
+    }));
+  }, [phaseState?.data, ctx, stepMinutes]);
+
+  const activeData = usePhaseData ? phaseData : data;
+  const isLoading  = usePhaseData ? phaseState!.loading : state.loading;
+  const activeError = usePhaseData ? phaseState!.error  : state.error;
+  const isVoltage  = unit === " pu";
 
   const computedDomain = useMemo<[number | string, number | string]>(() => {
     if (!isVoltage) return yDomain;
     const values: number[] = [];
-    for (const d of data) {
-      if (d.min != null) values.push(d.min);
-      if (d.mean != null) values.push(d.mean);
-      if (d.max != null) values.push(d.max);
+    if (usePhaseData) {
+      for (const d of phaseData) {
+        if (d.meanA != null) values.push(d.meanA);
+        if (d.meanB != null) values.push(d.meanB);
+        if (d.meanC != null) values.push(d.meanC);
+      }
+    } else {
+      for (const d of data) {
+        if (d.min != null) values.push(d.min);
+        if (d.mean != null) values.push(d.mean);
+        if (d.max != null) values.push(d.max);
+      }
     }
     if (values.length === 0) return yDomain;
     const lo = Math.min(...values), hi = Math.max(...values);
     const range = Math.max(hi - lo, 0.01);
     const pad = Math.max(range * 0.15, 0.005);
     return [+(lo - pad).toFixed(3), +(hi + pad).toFixed(3)];
-  }, [data, isVoltage, yDomain]);
+  }, [data, phaseData, isVoltage, yDomain, usePhaseData]);
 
   const visibleThresholds = useMemo(() => {
     if (!isVoltage) return thresholds;
@@ -720,7 +827,7 @@ function EnvelopeChart({ title, subtitle, state, ctx, unit, yDomain, showMin, me
     return thresholds.filter((th) => th.y >= lo && th.y <= hi);
   }, [thresholds, computedDomain, isVoltage]);
 
-  const tickInterval = Math.max(0, Math.floor(data.length / 8) - 1);
+  const tickInterval = Math.max(0, Math.floor(activeData.length / 8) - 1);
 
   return (
     <Card className="p-5">
@@ -729,25 +836,25 @@ function EnvelopeChart({ title, subtitle, state, ctx, unit, yDomain, showMin, me
         <div className="text-xs text-muted-foreground">{subtitle}</div>
       </div>
 
-      {state.loading && (
+      {isLoading && (
         <div className="h-72 flex items-center justify-center text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin mr-2" /> Loading…
         </div>
       )}
-      {state.error && (
+      {!isLoading && activeError && (
         <div className="h-72 flex items-center justify-center text-sm text-destructive text-center px-4">
-          {state.error}
+          {activeError}
         </div>
       )}
-      {!state.loading && !state.error && data.length === 0 && (
+      {!isLoading && !activeError && activeData.length === 0 && (
         <div className="h-72 flex items-center justify-center text-sm text-muted-foreground">
           No data points returned.
         </div>
       )}
-      {!state.loading && !state.error && data.length > 0 && (
+      {!isLoading && !activeError && activeData.length > 0 && (
         <div className="h-80">
           <ResponsiveContainer>
-            <LineChart data={data} margin={{ top: 5, right: 48, left: -10, bottom: 0 }}>
+            <LineChart data={activeData as object[]} margin={{ top: 5, right: 48, left: -10, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="oklch(0.91 0.01 240)" />
               <XAxis
                 dataKey="t" type="number" scale="time"
@@ -775,9 +882,19 @@ function EnvelopeChart({ title, subtitle, state, ctx, unit, yDomain, showMin, me
                   label={{ value: th.label, position: "right", fill: "oklch(0.58 0.22 25)", fontSize: 11 }}
                 />
               ))}
-              {showMin && !meanOnly && <Line dataKey="min" stroke="oklch(0.58 0.22 25)" strokeWidth={2} dot={false} name="Min" />}
-              <Line dataKey="mean" stroke="oklch(0.62 0.16 150)" strokeWidth={2} dot={false} name="Mean" />
-              {!meanOnly && <Line dataKey="max"  stroke="oklch(0.7 0.12 80)"  strokeWidth={1.5} dot={false} name="Max" />}
+              {usePhaseData ? (
+                <>
+                  <Line dataKey="meanA" stroke={PHASE_COLORS.a} strokeWidth={2} dot={false} name="Phase A" />
+                  <Line dataKey="meanB" stroke={PHASE_COLORS.b} strokeWidth={2} dot={false} name="Phase B" />
+                  <Line dataKey="meanC" stroke={PHASE_COLORS.c} strokeWidth={2} dot={false} name="Phase C" />
+                </>
+              ) : (
+                <>
+                  {showMin && !meanOnly && <Line dataKey="min" stroke="oklch(0.58 0.22 25)" strokeWidth={2} dot={false} name="Min" />}
+                  <Line dataKey="mean" stroke="oklch(0.62 0.16 150)" strokeWidth={2} dot={false} name="Mean" />
+                  {!meanOnly && <Line dataKey="max" stroke="oklch(0.7 0.12 80)" strokeWidth={1.5} dot={false} name="Max" />}
+                </>
+              )}
             </LineChart>
           </ResponsiveContainer>
         </div>

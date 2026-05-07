@@ -441,3 +441,29 @@ export async function fetchRunValidation(runId: string): Promise<SimulationValid
   if (!res.ok) return null;
   return res.json();
 }
+
+// ── Phase data for unbalanced networks ───────────────────────────────────────
+
+export interface PhaseData {
+  mean: number[];
+  max: number[];
+  min: number[];
+  n_rows: number;
+}
+
+export interface PhasesResult {
+  a: PhaseData;
+  b: PhaseData;
+  c: PhaseData;
+}
+
+export async function fetchResultPhases(
+  networkId: string,
+  runId: string,
+  kind: ResultKind,
+): Promise<PhasesResult> {
+  const url = `${API_BASE}/networks/${networkId}/results/${runId}/${kind}/phases`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Failed to load ${kind} phases (${res.status})`);
+  return res.json();
+}
