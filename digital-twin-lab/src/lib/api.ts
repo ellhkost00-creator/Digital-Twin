@@ -1,6 +1,118 @@
 import type { Network } from "@/lib/mock-data";
+import { getToken, clearToken } from "@/lib/auth";
 
 export const API_BASE = "http://localhost:8000";
+
+// ── Central fetch wrapper ─────────────────────────────────────────────────────
+// Injects Authorization: Bearer <token> into every request.
+// Automatically clears the stored token when the server returns 401.
+
+export async function apiFetch(url: string, options?: RequestInit): Promise<Response> {
+  const token = getToken();
+  const res = await fetch(url, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(options?.headers as Record<string, string> | undefined),
+    },
+  });
+  if (res.status === 401) {
+    // Token expired or revoked — force re-login
+    clearToken();
+  }
+  return res;
+}
+
+// ── Auth API ──────────────────────────────────────────────────────────────────
+
+export interface AuthUser {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  initials: string;
+  isSelf?: boolean;
+}
+
+export interface AuthResponse {
+  access_token: string;
+  token_type: string;
+  user: AuthUser;
+}
+
+/**
+ * Login — uses raw fetch (no token yet, endpoint is public).
+ * Throws an Error with the backend's detail message on failure.
+ */
+export async function loginApi(email: string, password: string): Promise<AuthResponse> {
+  const res = await fetch(`${API_BASE}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail || `Login failed (${res.status})`);
+  }
+  return res.json();
+}
+
+/**
+ * Register — uses raw fetch (no token yet, endpoint is public).
+ * Throws an Error with the backend's detail message on failure.
+ */
+export async function registerApi(
+  name: string,
+  email: string,
+  password: string,
+  role: "student" | "researcher" = "student",
+): Promise<AuthResponse> {
+  const res = await fetch(`${API_BASE}/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, email, password, role }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail || `Registration failed (${res.status})`);
+  }
+  return res.json();
+}
+
+/** Validate the stored JWT against the backend. Throws if the token is invalid. */
+export async function getMeApi(): Promise<{
+  user_id: string;
+  email: string;
+  role: string;
+  name: string;
+}> {
+  const res = await apiFetch(`${API_BASE}/auth/me`);
+  if (!res.ok) throw new Error(`Not authenticated (${res.status})`);
+  return res.json();
+}
+
+/** Change the current user's password. */
+export async function changePasswordApi(
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  const res = await apiFetch(`${API_BASE}/auth/change-password`, {
+    method: "POST",
+    body: JSON.stringify({
+      current_password: currentPassword,
+      new_password: newPassword,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(
+      (err as { detail?: string }).detail || `Change password failed (${res.status})`,
+    );
+  }
+}
+
+// ── Networks ──────────────────────────────────────────────────────────────────
 
 export type Horizon = "day" | "week" | "month";
 
@@ -9,7 +121,7 @@ export async function fetchSimbenchNetworks(): Promise<{
   serviceUrl: string;
   error: string | null;
 }> {
-  const response = await fetch(`${API_BASE}/networks`);
+  const response = await apiFetch(`${API_BASE}/networks`);
   if (!response.ok) throw new Error("Failed to fetch networks");
   const networks = (await response.json()) as Network[];
   return { networks, serviceUrl: API_BASE, error: null };
@@ -36,9 +148,8 @@ export async function runSimulation(params: RunSimulationParams) {
     body.day = day;
   }
 
-  const response = await fetch(`${API_BASE}/networks/${networkId}/run`, {
+  const response = await apiFetch(`${API_BASE}/networks/${networkId}/run`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 
@@ -69,7 +180,7 @@ export function buildResultUrl(networkId: string, runId: string, kind: ResultKin
 
 export async function fetchResult(networkId: string, runId: string, kind: ResultKind) {
   const url = buildResultUrl(networkId, runId, kind);
-  const response = await fetch(url);
+  const response = await apiFetch(url);
   if (!response.ok) throw new Error(`Failed to fetch ${kind}`);
   return response.json();
 }
@@ -88,7 +199,7 @@ export async function fetchResultEnvelope(
   kind: ResultKind,
 ): Promise<EnvelopeResult> {
   const url = `${API_BASE}/networks/${networkId}/results/${runId}/${kind}/envelope`;
-  const res = await fetch(url);
+  const res = await apiFetch(url);
   if (!res.ok) throw new Error(`Failed to load ${kind} (${res.status})`);
   return res.json();
 }
@@ -100,7 +211,7 @@ export async function fetchResultColumn(
   colName: string,
 ): Promise<{ column: string; values: number[] }> {
   const url = `${API_BASE}/networks/${networkId}/results/${runId}/${kind}/column/${encodeURIComponent(colName)}`;
-  const res = await fetch(url);
+  const res = await apiFetch(url);
   if (!res.ok) throw new Error(`Failed to load column (${res.status})`);
   return res.json();
 }
@@ -150,9 +261,8 @@ export async function runOpenDSSSimulation(
   networkId: string,
   day: number,
 ): Promise<OpenDSSRunResult> {
-  const response = await fetch(`${API_BASE}/networks/${networkId}/run-opendss`, {
+  const response = await apiFetch(`${API_BASE}/networks/${networkId}/run-opendss`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ day }),
   });
 
@@ -160,7 +270,7 @@ export async function runOpenDSSSimulation(
     let msg = `Simulation failed (${response.status})`;
     try {
       const err = await response.json();
-      msg = err.detail || err.message || msg;
+      msg = (err as { detail?: string; message?: string }).detail || (err as { message?: string }).message || msg;
     } catch {}
     throw new Error(msg);
   }
@@ -169,14 +279,14 @@ export async function runOpenDSSSimulation(
 }
 
 export async function fetchRuns(): Promise<BackendRun[]> {
-  const response = await fetch(`${API_BASE}/runs`);
+  const response = await apiFetch(`${API_BASE}/runs`);
   if (!response.ok) throw new Error("Failed to fetch runs");
   return response.json();
 }
 
 export async function deleteRunApi(runId: string, networkId: string): Promise<void> {
   const url = `${API_BASE}/runs/${encodeURIComponent(runId)}?network_id=${encodeURIComponent(networkId)}`;
-  const res = await fetch(url, { method: "DELETE" });
+  const res = await apiFetch(url, { method: "DELETE" });
   if (!res.ok && res.status !== 204) throw new Error(`Failed to delete run (${res.status})`);
 }
 
@@ -273,9 +383,8 @@ export async function simulateOpenDSS(
   day: number,
   validationHours: 1 | 2 | 4 | 24 = 2,
 ): Promise<SimulateOpenDSSResult> {
-  const response = await fetch(`${API_BASE}/convert/opendss/simulate`, {
+  const response = await apiFetch(`${API_BASE}/convert/opendss/simulate`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ network, mode, day, validation_hours: validationHours }),
   });
 
@@ -283,7 +392,7 @@ export async function simulateOpenDSS(
     let msg = `Simulation failed (${response.status})`;
     try {
       const err = await response.json();
-      msg = err.detail || err.message || msg;
+      msg = (err as { detail?: string; message?: string }).detail || (err as { message?: string }).message || msg;
     } catch {}
     throw new Error(msg);
   }
@@ -303,9 +412,8 @@ export async function saveOpenDSSNetwork(
   validation_day?: number,
   metrics?: Record<string, number | string>,
 ): Promise<SaveOpenDSSResult> {
-  const response = await fetch(`${API_BASE}/convert/opendss/save`, {
+  const response = await apiFetch(`${API_BASE}/convert/opendss/save`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ network, mode, validation_day, metrics }),
   });
 
@@ -313,7 +421,7 @@ export async function saveOpenDSSNetwork(
     let msg = `Save failed (${response.status})`;
     try {
       const err = await response.json();
-      msg = err.detail || err.message || msg;
+      msg = (err as { detail?: string; message?: string }).detail || (err as { message?: string }).message || msg;
     } catch {}
     throw new Error(msg);
   }
@@ -325,9 +433,8 @@ export async function convertOpenDSS(
   network: "1" | "2" | "3" | "4",
   mode: "balanced" | "unbalanced",
 ): Promise<ConvertOpenDSSResult> {
-  const response = await fetch(`${API_BASE}/convert/opendss`, {
+  const response = await apiFetch(`${API_BASE}/convert/opendss`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ network, mode }),
   });
 
@@ -335,7 +442,7 @@ export async function convertOpenDSS(
     let msg = `Conversion failed (${response.status})`;
     try {
       const err = await response.json();
-      msg = err.detail || err.message || msg;
+      msg = (err as { detail?: string; message?: string }).detail || (err as { message?: string }).message || msg;
     } catch {}
     throw new Error(msg);
   }
@@ -343,7 +450,7 @@ export async function convertOpenDSS(
   return response.json();
 }
 
-// ── Scenarios ────────────────────────────────────────────────────────────────
+// ── Scenarios ─────────────────────────────────────────────────────────────────
 
 export interface ScenarioApi {
   id: string;
@@ -358,7 +465,7 @@ export interface ScenarioApi {
 }
 
 export async function fetchScenarios(): Promise<ScenarioApi[]> {
-  const res = await fetch(`${API_BASE}/scenarios`);
+  const res = await apiFetch(`${API_BASE}/scenarios`);
   if (!res.ok) throw new Error(`Failed to fetch scenarios (${res.status})`);
   return res.json();
 }
@@ -373,9 +480,8 @@ export async function createScenarioApi(input: {
   timestep: string;
   createdBy: string;
 }): Promise<ScenarioApi> {
-  const res = await fetch(`${API_BASE}/scenarios`, {
+  const res = await apiFetch(`${API_BASE}/scenarios`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       id: input.id,
       name: input.name,
@@ -392,11 +498,13 @@ export async function createScenarioApi(input: {
 }
 
 export async function deleteScenarioApi(id: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/scenarios/${encodeURIComponent(id)}`, { method: "DELETE" });
+  const res = await apiFetch(`${API_BASE}/scenarios/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
   if (!res.ok && res.status !== 204) throw new Error(`Failed to delete scenario (${res.status})`);
 }
 
-// ── Users ────────────────────────────────────────────────────────────────────
+// ── Users ─────────────────────────────────────────────────────────────────────
 
 export interface ManagedUserApi {
   id: string;
@@ -408,7 +516,7 @@ export interface ManagedUserApi {
 }
 
 export async function fetchUsers(): Promise<ManagedUserApi[]> {
-  const res = await fetch(`${API_BASE}/users`);
+  const res = await apiFetch(`${API_BASE}/users`);
   if (!res.ok) throw new Error(`Failed to fetch users (${res.status})`);
   return res.json();
 }
@@ -418,9 +526,8 @@ export async function createUserApi(input: {
   email: string;
   role: string;
 }): Promise<ManagedUserApi[]> {
-  const res = await fetch(`${API_BASE}/users`, {
+  const res = await apiFetch(`${API_BASE}/users`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   });
   if (!res.ok) throw new Error(`Failed to create user (${res.status})`);
@@ -428,9 +535,8 @@ export async function createUserApi(input: {
 }
 
 export async function updateUserRoleApi(id: string, role: string): Promise<ManagedUserApi[]> {
-  const res = await fetch(`${API_BASE}/users/${encodeURIComponent(id)}/role`, {
+  const res = await apiFetch(`${API_BASE}/users/${encodeURIComponent(id)}/role`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ role }),
   });
   if (!res.ok) throw new Error(`Failed to update user role (${res.status})`);
@@ -438,17 +544,19 @@ export async function updateUserRoleApi(id: string, role: string): Promise<Manag
 }
 
 export async function deleteUserApi(id: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/users/${encodeURIComponent(id)}`, { method: "DELETE" });
+  const res = await apiFetch(`${API_BASE}/users/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
   if (!res.ok && res.status !== 204) throw new Error(`Failed to delete user (${res.status})`);
 }
 
 export async function fetchRunValidation(runId: string): Promise<SimulationValidation | null> {
-  const res = await fetch(`${API_BASE}/runs/${encodeURIComponent(runId)}/validation`);
+  const res = await apiFetch(`${API_BASE}/runs/${encodeURIComponent(runId)}/validation`);
   if (!res.ok) return null;
   return res.json();
 }
 
-// ── Phase data for unbalanced networks ───────────────────────────────────────
+// ── Phase data for unbalanced networks ────────────────────────────────────────
 
 export interface PhaseData {
   mean: number[];
@@ -470,7 +578,7 @@ export async function fetchResultPhases(
   kind: ResultKind,
 ): Promise<PhasesResult> {
   const url = `${API_BASE}/networks/${networkId}/results/${runId}/${kind}/phases`;
-  const res = await fetch(url);
+  const res = await apiFetch(url);
   if (!res.ok) throw new Error(`Failed to load ${kind} phases (${res.status})`);
   return res.json();
 }
@@ -482,7 +590,7 @@ export async function fetchResultPhasesColumn(
   colName: string,
 ): Promise<{ column: string; a: number[]; b: number[]; c: number[] }> {
   const url = `${API_BASE}/networks/${networkId}/results/${runId}/${kind}/phases/column/${encodeURIComponent(colName)}`;
-  const res = await fetch(url);
+  const res = await apiFetch(url);
   if (!res.ok) throw new Error(`Failed to load phase column (${res.status})`);
   return res.json();
 }

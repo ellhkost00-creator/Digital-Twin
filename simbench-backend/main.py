@@ -20,8 +20,13 @@ from db import (
     get_db_users, save_user, update_user_role, delete_user, seed_users,
     save_validation_metrics, get_latest_validation,
     init_db, save_network, save_run, delete_run, seed_networks_from_file,
+    get_user_by_email, update_user_password,
 )
-from fastapi import FastAPI, HTTPException
+from auth_utils import (
+    hash_password, verify_password, create_access_token,
+    get_current_user, require_admin,
+)
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -140,6 +145,23 @@ class CreateUserRequest(BaseModel):
 
 class UpdateUserRoleRequest(BaseModel):
     role: Literal["admin", "researcher", "student"]
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class RegisterRequest(BaseModel):
+    name: str
+    email: str
+    password: str
+    role: Literal["student", "researcher"] = "student"
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
 
 
 def load_networks():
@@ -354,7 +376,7 @@ def _generate_opendss_plot(network_id: str, net_xlsx: Path, net_json: Path, mode
 
 
 @app.post("/convert/opendss")
-def convert_opendss(request: ConvertOpenDSSRequest):
+def convert_opendss(request: ConvertOpenDSSRequest, _cu: dict = Depends(get_current_user)):
     """
     Run the OpenDSS → pandapower conversion pipeline for one of the 4 networks.
     Skips the pipeline entirely if the output file already exists (cached).
@@ -645,7 +667,7 @@ def _build_validation(metrics_dir: Path, mode: str) -> dict:
 
 
 @app.post("/convert/opendss/simulate")
-def simulate_opendss(request: SimulateOpenDSSRequest):
+def simulate_opendss(request: SimulateOpenDSSRequest, _cu: dict = Depends(get_current_user)):
     """
     Run the OpenDSS and pandapower timeseries simulations for the chosen day,
     then compute comparison metrics (MAPE, max error, bias).
@@ -741,7 +763,7 @@ def _upsert_networks_json(record: dict) -> None:
 
 
 @app.post("/convert/opendss/save")
-def save_opendss_network(request: SaveOpenDSSRequest):
+def save_opendss_network(request: SaveOpenDSSRequest, _cu: dict = Depends(get_current_user)):
     """
     Persist a converted OpenDSS network into the database and networks.json
     so it appears in /networks and can be used in future simulations.
@@ -793,7 +815,7 @@ def save_opendss_network(request: SaveOpenDSSRequest):
 
 
 @app.post("/networks/{network_id}/run-opendss")
-def run_opendss_simulation(network_id: str, request: OpenDSSRunRequest):
+def run_opendss_simulation(network_id: str, request: OpenDSSRunRequest, _cu: dict = Depends(get_current_user)):
     """
     Run a pandapower timeseries simulation on a previously converted OpenDSS network.
     Regenerates load profiles for the requested day, runs the appropriate timeseries
@@ -907,13 +929,92 @@ def run_opendss_simulation(network_id: str, request: OpenDSSRunRequest):
     }
 
 
+# ── Auth endpoints (public — no Depends(get_current_user)) ───────────────────
+
+@app.post("/auth/login")
+def login(request: LoginRequest):
+    if not db_available():
+        raise HTTPException(status_code=503, detail="Authentication service unavailable (database not connected)")
+    user_data = get_user_by_email(request.email)
+    if not user_data:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    if not user_data.get("hashed_password"):
+        raise HTTPException(status_code=401, detail="Account not activated — contact an admin")
+    if not verify_password(request.password, user_data["hashed_password"]):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    token = create_access_token({
+        "sub":   user_data["id"],
+        "email": user_data["email"],
+        "role":  user_data["role"],
+        "name":  user_data["name"],
+    })
+    # Return API-safe user dict (strip hashed_password)
+    user_api = {k: v for k, v in user_data.items() if k != "hashed_password"}
+    user_api["isSelf"] = user_api.pop("is_self", False)
+    return {"access_token": token, "token_type": "bearer", "user": user_api}
+
+
+@app.post("/auth/register", status_code=201)
+def register(request: RegisterRequest):
+    if not db_available():
+        raise HTTPException(status_code=503, detail="Registration unavailable (database not connected)")
+    existing = get_user_by_email(request.email)
+    if existing:
+        raise HTTPException(status_code=409, detail="Email already registered")
+    import time as _time
+    user_id = f"u-{int(_time.time() * 1000)}"
+    hashed = hash_password(request.password)
+    initials = _make_initials(request.name)
+    result = save_user(
+        id=user_id,
+        name=request.name,
+        email=request.email,
+        role=request.role,
+        initials=initials,
+        hashed_password=hashed,
+    )
+    if result is None:
+        raise HTTPException(status_code=503, detail="Registration failed — could not save user")
+    token = create_access_token({
+        "sub":   user_id,
+        "email": request.email,
+        "role":  request.role,
+        "name":  request.name,
+    })
+    return {"access_token": token, "token_type": "bearer", "user": result}
+
+
+@app.get("/auth/me")
+def get_me(current_user: dict = Depends(get_current_user)):
+    """Return the JWT payload for the authenticated user."""
+    return current_user
+
+
+@app.post("/auth/change-password")
+def change_password(
+    request: ChangePasswordRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    user_data = get_user_by_email(current_user["email"])
+    if not user_data or not user_data.get("hashed_password"):
+        raise HTTPException(status_code=400, detail="Cannot change password for this account")
+    if not verify_password(request.current_password, user_data["hashed_password"]):
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+    new_hash = hash_password(request.new_password)
+    if not update_user_password(user_data["id"], new_hash):
+        raise HTTPException(status_code=503, detail="Could not update password (database error)")
+    return {"message": "Password updated successfully"}
+
+
+# ── Scenario endpoints ────────────────────────────────────────────────────────
+
 @app.get("/scenarios")
-def list_scenarios():
+def list_scenarios(_cu: dict = Depends(get_current_user)):
     return get_db_scenarios() or []
 
 
 @app.post("/scenarios", status_code=201)
-def create_scenario_endpoint(request: CreateScenarioRequest):
+def create_scenario_endpoint(request: CreateScenarioRequest, _cu: dict = Depends(get_current_user)):
     import time as _time
     scenario_id = request.id or f"scn-{int(_time.time() * 1000)}"
     result = save_scenario(
@@ -942,12 +1043,14 @@ def create_scenario_endpoint(request: CreateScenarioRequest):
 
 
 @app.delete("/scenarios/{scenario_id}", status_code=204)
-def delete_scenario_endpoint(scenario_id: str):
+def delete_scenario_endpoint(scenario_id: str, _cu: dict = Depends(get_current_user)):
     delete_scenario(scenario_id)
 
 
+# ── User management endpoints (admin only) ────────────────────────────────────
+
 @app.get("/users")
-def list_users():
+def list_users(_cu: dict = Depends(require_admin)):
     return get_db_users() or []
 
 
@@ -962,28 +1065,32 @@ def _make_initials(name: str) -> str:
 
 
 @app.post("/users")
-def create_user_endpoint(request: CreateUserRequest):
+def create_user_endpoint(request: CreateUserRequest, _cu: dict = Depends(require_admin)):
     import time as _time
+    import bcrypt as _bcrypt
     user_id = f"u-{int(_time.time() * 1000)}"
     initials = _make_initials(request.name)
+    # Give admin-created users the default seed password so they can log in
+    _default_pw = os.getenv("SEED_USER_PASSWORD", "DtLab2025!")
+    hashed = _bcrypt.hashpw(_default_pw.encode("utf-8"), _bcrypt.gensalt()).decode("utf-8")
     save_user(id=user_id, name=request.name, email=request.email,
-              role=request.role, initials=initials)
+              role=request.role, initials=initials, hashed_password=hashed)
     return get_db_users() or []
 
 
 @app.put("/users/{user_id}/role")
-def update_user_role_endpoint(user_id: str, request: UpdateUserRoleRequest):
+def update_user_role_endpoint(user_id: str, request: UpdateUserRoleRequest, _cu: dict = Depends(require_admin)):
     update_user_role(user_id, request.role)
     return get_db_users() or []
 
 
 @app.delete("/users/{user_id}", status_code=204)
-def delete_user_endpoint(user_id: str):
+def delete_user_endpoint(user_id: str, _cu: dict = Depends(require_admin)):
     delete_user(user_id)
 
 
 @app.get("/runs/{run_id}/validation")
-def get_run_validation(run_id: str):
+def get_run_validation(run_id: str, _cu: dict = Depends(get_current_user)):
     runs = get_db_runs()
     if runs is None:
         raise HTTPException(status_code=503, detail="Database unavailable")
@@ -1022,12 +1129,12 @@ def root():
 
 
 @app.get("/runs")
-def list_runs():
+def list_runs(_cu: dict = Depends(get_current_user)):
     return get_db_runs() or []
 
 
 @app.delete("/runs/{run_id}", status_code=204)
-def delete_run_endpoint(run_id: str, network_id: str):
+def delete_run_endpoint(run_id: str, network_id: str, _cu: dict = Depends(get_current_user)):
     """
     Delete a simulation run: removes the DB record and the on-disk result files.
     Requires `network_id` as a query parameter so the results directory can be located.
@@ -1046,12 +1153,12 @@ def delete_run_endpoint(run_id: str, network_id: str):
 
 
 @app.get("/networks")
-def networks():
+def networks(_cu: dict = Depends(get_current_user)):
     return get_db_networks() or []
 
 
 @app.get("/networks/{network_id}")
-def network_detail(network_id: str):
+def network_detail(network_id: str, _cu: dict = Depends(get_current_user)):
     db_net = get_db_network(network_id)
     if db_net is not None:
         return db_net
@@ -1095,7 +1202,7 @@ def compute_violation_counts(out_dir: Path, has_trafo: bool) -> dict:
 
 
 @app.post("/networks/{network_id}/run")
-def run_simulation(network_id: str, request: RunRequest):
+def run_simulation(network_id: str, request: RunRequest, _cu: dict = Depends(get_current_user)):
     if not network_exists(network_id):
         raise HTTPException(status_code=404, detail="Network not found")
 
@@ -1190,7 +1297,7 @@ def run_simulation(network_id: str, request: RunRequest):
 
 
 @app.get("/networks/{network_id}/results/{run_id}/vm-pu")
-def get_vm_pu(network_id: str, run_id: str):
+def get_vm_pu(network_id: str, run_id: str, _cu: dict = Depends(get_current_user)):
     file_path = RESULTS_DIR / network_id / run_id / "res_bus" / "vm_pu.csv"
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="vm_pu not found")
@@ -1198,7 +1305,7 @@ def get_vm_pu(network_id: str, run_id: str):
 
 
 @app.get("/networks/{network_id}/results/{run_id}/line-loading")
-def get_line_loading(network_id: str, run_id: str):
+def get_line_loading(network_id: str, run_id: str, _cu: dict = Depends(get_current_user)):
     file_path = RESULTS_DIR / network_id / run_id / "res_line" / "loading_percent.csv"
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="line loading not found")
@@ -1206,7 +1313,7 @@ def get_line_loading(network_id: str, run_id: str):
 
 
 @app.get("/networks/{network_id}/results/{run_id}/trafo-loading")
-def get_trafo_loading(network_id: str, run_id: str):
+def get_trafo_loading(network_id: str, run_id: str, _cu: dict = Depends(get_current_user)):
     file_path = RESULTS_DIR / network_id / run_id / "res_trafo" / "loading_percent.csv"
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="trafo loading not found")
@@ -1252,7 +1359,7 @@ def _load_result_df(network_id: str, run_id: str, kind: str) -> pd.DataFrame:
 
 
 @app.get("/networks/{network_id}/results/{run_id}/{kind}/envelope")
-def get_result_envelope(network_id: str, run_id: str, kind: str):
+def get_result_envelope(network_id: str, run_id: str, kind: str, _cu: dict = Depends(get_current_user)):
     """Return per-timestep min/mean/max across all components — much smaller than the full CSV."""
     df = _load_result_df(network_id, run_id, kind)
     return {
@@ -1265,7 +1372,7 @@ def get_result_envelope(network_id: str, run_id: str, kind: str):
 
 
 @app.get("/networks/{network_id}/results/{run_id}/{kind}/phases")
-def get_result_phases(network_id: str, run_id: str, kind: str):
+def get_result_phases(network_id: str, run_id: str, kind: str, _cu: dict = Depends(get_current_user)):
     """Return per-phase per-timestep min/mean/max for unbalanced OpenDSS runs."""
     entries = _KIND_TO_3PH_PATH.get(kind)
     if not entries:
@@ -1287,7 +1394,7 @@ def get_result_phases(network_id: str, run_id: str, kind: str):
 
 
 @app.get("/networks/{network_id}/results/{run_id}/{kind}/phases/column/{col_name:path}")
-def get_result_phases_column(network_id: str, run_id: str, kind: str, col_name: str):
+def get_result_phases_column(network_id: str, run_id: str, kind: str, col_name: str, _cu: dict = Depends(get_current_user)):
     """Return per-phase time-series for a single component (unbalanced OpenDSS only)."""
     entries = _KIND_TO_3PH_PATH.get(kind)
     if not entries:
@@ -1313,7 +1420,7 @@ def get_result_phases_column(network_id: str, run_id: str, kind: str, col_name: 
 
 
 @app.get("/networks/{network_id}/results/{run_id}/{kind}/column/{col_name:path}")
-def get_result_column(network_id: str, run_id: str, kind: str, col_name: str):
+def get_result_column(network_id: str, run_id: str, kind: str, col_name: str, _cu: dict = Depends(get_current_user)):
     """Return the time-series for a single component (bus / line / trafo)."""
     df = _load_result_df(network_id, run_id, kind)
     if col_name not in df.columns:

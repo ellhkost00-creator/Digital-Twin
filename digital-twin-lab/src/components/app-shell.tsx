@@ -14,12 +14,11 @@ import {
   Search,
   Users as UsersIcon,
 } from "lucide-react";
-import { currentUser } from "@/lib/mock-data";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { clearCurrentRole, hasAccess, type RouteKey } from "@/lib/auth";
+import { clearToken, getCurrentUserInfo, hasAccess, type RouteKey } from "@/lib/auth";
 import { useRole } from "@/hooks/use-role";
 
 const navItems: { to: RouteKey; label: string; icon: typeof LayoutGrid }[] = [
@@ -68,9 +67,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   const visibleNav = navItems.filter((item) => hasAccess(role, item.to));
 
+  const userInfo = getCurrentUserInfo();
+
   const handleSignOut = (e: React.MouseEvent) => {
     e.preventDefault();
-    clearCurrentRole();
+    clearToken();
     navigate({ to: "/" });
   };
 
@@ -145,12 +146,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </Button>
             <div className="hidden sm:flex items-center gap-3 pl-3 border-l border-border">
               <div className="text-right leading-tight">
-                <div className="text-sm font-medium">{currentUser.name}</div>
+                <div className="text-sm font-medium">{userInfo?.name ?? "User"}</div>
                 <div className="text-xs text-muted-foreground capitalize">{role}</div>
               </div>
               <Avatar className="h-9 w-9">
                 <AvatarFallback className="bg-primary text-primary-foreground text-xs font-semibold">
-                  {currentUser.initials}
+                  {userInfo?.initials ?? "?"}
                 </AvatarFallback>
               </Avatar>
             </div>

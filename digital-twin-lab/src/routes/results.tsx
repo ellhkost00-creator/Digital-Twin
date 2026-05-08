@@ -12,8 +12,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { networks } from "@/lib/mock-data";
 import { getAllScenarios } from "@/lib/scenarios-store";
+import { useNetworks } from "@/lib/networks-store";
 import { useRuns } from "@/lib/runs-store";
 import { API_BASE, fetchResultEnvelope, fetchResultColumn, fetchResultPhases, fetchResultPhasesColumn, type EnvelopeResult, type PhasesResult } from "@/lib/api";
 import {
@@ -88,6 +88,7 @@ export const Route = createFileRoute("/results")({
 type LoadState = "idle" | "loading" | "ready";
 
 function Results() {
+  const networks = useNetworks();
   const runs = useRuns();
   const { runId: incomingRunId, networkId: incomingNetworkId } = Route.useSearch();
   const incomingRun = incomingRunId

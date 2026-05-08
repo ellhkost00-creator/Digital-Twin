@@ -4,7 +4,7 @@ import { AppShell, PageHeader, StatusBadge } from "@/components/app-shell";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useRuns } from "@/lib/runs-store";
-import { scenarios, violations } from "@/lib/mock-data";
+import { useScenarios } from "@/lib/scenarios-store";
 import { useNetworks, seedNetworks } from "@/lib/networks-store";
 import { fetchSimbenchNetworks } from "@/lib/api";
 import {
@@ -54,21 +54,27 @@ function Dashboard() {
 
   const networks = useNetworks();
   const runs = useRuns();
+  const scenarios = useScenarios();
 
   const stats = useMemo(() => {
     const active = runs.filter((r) => r.status === "running" || r.status === "queued").length;
     const failed = runs.filter((r) => r.status === "failed").length;
     const completed = runs.filter((r) => r.status === "completed");
     const lastSuccess = completed[0]?.startedAt ?? "—";
+    // Tally total violations from completed run metadata
+    const openViolations = completed.reduce(
+      (sum, r) => sum + ((r as typeof r & { violations?: number }).violations ?? 0),
+      0,
+    );
     return {
       networks: networks.length,
       scenarios: scenarios.length,
       active,
-      openViolations: violations.length,
+      openViolations,
       failed,
       lastSuccess,
     };
-  }, [runs, networks]);
+  }, [runs, networks, scenarios]);
 
   const [systemOverview, setSystemOverview] =
     useState<SystemViolationOverview | null>(null);
@@ -107,9 +113,11 @@ function Dashboard() {
     return networks.slice(0, 5).map((n) => {
       const netRuns = runs.filter((r) => r.networkName.includes(n.name.split(" ")[0]));
       const last = netRuns[0];
-      const violationCount = violations.filter((v) =>
-        netRuns.some((r) => r.id === v.runId),
-      ).length;
+      // Sum violations reported in run metadata
+      const violationCount = netRuns.reduce(
+        (sum, r) => sum + ((r as typeof r & { violations?: number }).violations ?? 0),
+        0,
+      );
       return {
         id: n.id,
         name: n.name,
@@ -173,19 +181,21 @@ function Dashboard() {
         user: "—",
       });
     }
-    const firstViol = violations[0];
-    if (firstViol) {
-      const violRun = runs.find((r) => r.id === firstViol.runId);
+    // Highlight the most recent run that had violations
+    const violatingRun = runs
+      .filter((r) => r.status === "completed" && ((r as typeof r & { violations?: number }).violations ?? 0) > 0)
+      .at(0);
+    if (violatingRun) {
       items.push({
         icon: AlertTriangle,
         tone: "text-warning-foreground",
-        text: `Violation analysis executed on run ${firstViol.runId}`,
-        time: "—",
-        user: violRun ? userForRun(violRun.id, violRun.scenarioName) : "—",
+        text: `Violations detected on run ${violatingRun.id} (${(violatingRun as typeof violatingRun & { violations?: number }).violations} total)`,
+        time: violatingRun.startedAt,
+        user: userForRun(violatingRun.id, violatingRun.scenarioName),
       });
     }
     return items.slice(0, 6);
-  }, [runs]);
+  }, [runs, scenarios, networks]);
 
   type SummaryCard = {
     label: string;
@@ -200,8 +210,6 @@ function Dashboard() {
   const completedCount = runs.filter((r) => r.status === "completed").length;
   const runningCount = runs.filter((r) => r.status === "running").length;
   const queuedCount = runs.filter((r) => r.status === "queued").length;
-  const criticalViolations = violations.filter((v) => v.severity === "critical" || v.severity === "high").length;
-
   const summary: SummaryCard[] = [
     { label: "Networks", value: stats.networks, sub: `${networks.filter((n) => n.status === "validated").length} validated`, icon: NetIcon, accent: "neutral", to: "/networks" },
     { label: "Scenarios", value: stats.scenarios, sub: "ready to run", icon: FlaskConical, accent: "neutral", to: "/scenarios" },

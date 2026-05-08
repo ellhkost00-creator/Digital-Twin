@@ -14,8 +14,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
-import { setCurrentRole, type Role } from "@/lib/auth";
-import { addUser } from "@/lib/users-store";
+import { setToken } from "@/lib/auth";
+import { loginApi, registerApi } from "@/lib/api";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -39,29 +39,53 @@ const stats = [
   { v: "98.7%", l: "Convergence" },
 ];
 
-const roles = ["admin", "researcher", "student"] as const;
-
 function LoginPage() {
   const navigate = useNavigate();
   const [isRegisterMode, setIsRegisterMode] = useState(false);
   const [username, setUsername] = useState("");
-  const [email, setEmail] = useState("elena.marchetti@dtlab.io");
-  const [password, setPassword] = useState("••••••••");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [selectedRole, setSelectedRole] = useState<"student" | "researcher" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setCurrentRole("researcher");
-    navigate({ to: "/dashboard" });
+    setError(null);
+    setLoading(true);
+    try {
+      const data = await loginApi(email, password);
+      setToken(data.access_token);
+      navigate({ to: "/dashboard" });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Login failed — please try again.");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleRegister = (e: React.FormEvent) => {
+  const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedRole) return;
-    addUser({ name: username.trim(), email: email.trim(), role: selectedRole });
-    setCurrentRole(selectedRole);
-    navigate({ to: "/dashboard" });
+    setError(null);
+    setLoading(true);
+    try {
+      const data = await registerApi(username.trim(), email.trim(), password, selectedRole);
+      setToken(data.access_token);
+      navigate({ to: "/dashboard" });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Registration failed — please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const switchMode = (register: boolean) => {
+    setIsRegisterMode(register);
+    setError(null);
+    setPassword("");
+    setConfirmPassword("");
   };
 
   return (
@@ -153,7 +177,7 @@ function LoginPage() {
           <span>© 2025 DT Lab Consortium · Internal research use</span>
           <span className="inline-flex items-center gap-1.5">
             <ShieldCheck className="h-3.5 w-3.5" />
-            SSO ready
+            JWT secured
           </span>
         </div>
       </div>
@@ -168,7 +192,6 @@ function LoginPage() {
             <div className="font-semibold">DT Lab</div>
           </div>
 
-          
           <div className="mb-7">
             <div className="text-xs uppercase tracking-widest text-primary font-semibold mb-2">
               {isRegisterMode ? "Register" : "Sign in"}
@@ -187,7 +210,7 @@ function LoginPage() {
             <form onSubmit={handleRegister} className="space-y-5">
               <div className="space-y-1.5">
                 <Label htmlFor="reg-username" className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                  User Name
+                  Full name
                 </Label>
                 <Input
                   id="reg-username"
@@ -209,6 +232,7 @@ function LoginPage() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
+                  placeholder="you@dtlab.io"
                   className="h-11"
                 />
               </div>
@@ -227,7 +251,7 @@ function LoginPage() {
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="reg-confirm" className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                  Confirm Password
+                  Confirm password
                 </Label>
                 <Input
                   id="reg-confirm"
@@ -284,21 +308,27 @@ function LoginPage() {
                 </div>
               </div>
 
+              {error && (
+                <p className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-md px-3 py-2">
+                  {error}
+                </p>
+              )}
+
               <Button
                 type="submit"
                 size="lg"
-                disabled={!selectedRole || !username.trim() || !password || password !== confirmPassword}
+                disabled={loading || !selectedRole || !username.trim() || !password || password !== confirmPassword}
                 className="w-full h-11 mt-2 font-semibold shadow-md shadow-primary/25 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-xl hover:shadow-primary/40 hover:brightness-105 group disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-md disabled:cursor-not-allowed"
               >
-                Register
-                <ArrowRight className="ml-2 h-4 w-4 transition-transform duration-300 ease-out group-hover:translate-x-1" />
+                {loading ? "Creating account…" : "Register"}
+                {!loading && <ArrowRight className="ml-2 h-4 w-4 transition-transform duration-300 ease-out group-hover:translate-x-1" />}
               </Button>
 
               <div className="text-center text-xs text-muted-foreground pt-1">
                 Already have an account?{" "}
                 <button
                   type="button"
-                  onClick={() => setIsRegisterMode(false)}
+                  onClick={() => switchMode(false)}
                   className="text-primary hover:underline font-medium"
                 >
                   Sign in
@@ -317,6 +347,7 @@ function LoginPage() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
+                  placeholder="you@dtlab.io"
                   className="h-11"
                 />
               </div>
@@ -325,9 +356,6 @@ function LoginPage() {
                   <Label htmlFor="password" className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                     Password
                   </Label>
-                  <a className="text-xs text-primary hover:underline font-medium" href="#">
-                    Forgot?
-                  </a>
                 </div>
                 <Input
                   id="password"
@@ -339,53 +367,33 @@ function LoginPage() {
                 />
               </div>
 
+              {error && (
+                <p className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-md px-3 py-2">
+                  {error}
+                </p>
+              )}
+
               <Button
                 type="submit"
                 size="lg"
-                className="w-full h-11 mt-2 font-semibold shadow-md shadow-primary/25 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-xl hover:shadow-primary/40 hover:brightness-105 group"
+                disabled={loading}
+                className="w-full h-11 mt-2 font-semibold shadow-md shadow-primary/25 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-xl hover:shadow-primary/40 hover:brightness-105 group disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Sign in
-                <ArrowRight className="ml-2 h-4 w-4 transition-transform duration-300 ease-out group-hover:translate-x-1" />
+                {loading ? "Signing in…" : "Sign in"}
+                {!loading && <ArrowRight className="ml-2 h-4 w-4 transition-transform duration-300 ease-out group-hover:translate-x-1" />}
               </Button>
 
               <div className="text-center text-xs text-muted-foreground pt-1">
                 Don't have an account?{" "}
                 <button
                   type="button"
-                  onClick={() => setIsRegisterMode(true)}
+                  onClick={() => switchMode(true)}
                   className="text-primary hover:underline font-medium"
                 >
                   Register
                 </button>
               </div>
             </form>
-          )}
-
-          {!isRegisterMode && (
-          <div className="mt-7 pt-5 border-t border-border">
-            <div className="flex items-center justify-between mb-2.5">
-              <div className="text-xs font-medium text-muted-foreground">Quick access</div>
-              <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70">
-                Demo
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              {roles.map((r) => (
-                <button
-                  key={r}
-                  type="button"
-                  onClick={() => {
-                    setCurrentRole(r as Role);
-                    navigate({ to: "/dashboard" });
-                  }}
-                  className="group flex items-center justify-between rounded-md border border-border bg-muted/30 px-3 py-2 text-xs font-medium capitalize text-foreground/80 hover:border-primary/40 hover:bg-primary/5 hover:text-foreground transition-all"
-                >
-                  <span>{r}</span>
-                  <ArrowRight className="h-3 w-3 text-muted-foreground opacity-0 -translate-x-1 transition-all group-hover:opacity-100 group-hover:translate-x-0 group-hover:text-primary" />
-                </button>
-              ))}
-            </div>
-          </div>
           )}
         </Card>
       </div>

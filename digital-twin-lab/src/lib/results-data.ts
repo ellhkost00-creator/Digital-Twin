@@ -1,4 +1,4 @@
-import { API_BASE } from "@/lib/api";
+import { API_BASE, apiFetch } from "@/lib/api";
 import {
   daysInMonth,
   pad2,
@@ -69,7 +69,7 @@ export async function fetchResultCsv(
   kind: ResultKind,
 ): Promise<ParsedCsv> {
   const url = `${API_BASE}/networks/${networkId}/results/${runId}/${kind}`;
-  const res = await fetch(url);
+  const res = await apiFetch(url);
   if (!res.ok) {
     throw new Error(`Failed to load ${kind} (${res.status})`);
   }

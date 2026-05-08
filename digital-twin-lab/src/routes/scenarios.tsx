@@ -17,6 +17,7 @@ import {
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import type { Scenario } from "@/lib/mock-data";
 import { useScenarios, createScenario } from "@/lib/scenarios-store";
+import { getCurrentUserInfo } from "@/lib/auth";
 import { createRun, removeRun } from "@/lib/runs-store";
 import { useNetworks } from "@/lib/networks-store";
 import {
@@ -119,7 +120,7 @@ function ScenarioBuilder() {
       mode,
       horizon,
       timestep: "—",
-      createdBy: "E. Marchetti",
+      createdBy: getCurrentUserInfo()?.name ?? "unknown",
       createdAt: new Date().toISOString().slice(0, 10),
     };
     await createScenario(pendingScenario);
@@ -157,19 +158,6 @@ function ScenarioBuilder() {
       };
       setLastResultUrls(urls);
       setLastRunId(runId);
-
-      try {
-        const networkObj = networks.find((n) => n.id === networkId);
-        sessionStorage.setItem("lastSimulationResult", JSON.stringify({
-          networkId,
-          networkName: networkObj?.name ?? networkId,
-          runId, urls, horizon, mode, year,
-          month: Number(month),
-          day: horizon === "month" ? null : Number(day),
-          raw: result ?? null,
-          at: new Date().toISOString(),
-        }));
-      } catch {}
 
       toast.success(`Simulation completed — run ${runId}`);
       removeRun(tempRunId);

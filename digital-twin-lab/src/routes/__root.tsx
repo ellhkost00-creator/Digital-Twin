@@ -2,6 +2,8 @@ import { Outlet, Link, createRootRoute, HeadContent, Scripts } from "@tanstack/r
 import { useEffect } from "react";
 import { seedScenariosFromBackend } from "@/lib/scenarios-store";
 import { loadUsersFromBackend } from "@/lib/users-store";
+import { getToken, clearToken } from "@/lib/auth";
+import { getMeApi } from "@/lib/api";
 
 import appCss from "../styles.css?url";
 
@@ -32,14 +34,8 @@ export const Route = createRootRoute({
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Lovable App" },
-      { name: "description", content: "Lovable Generated Project" },
-      { name: "author", content: "Lovable" },
-      { property: "og:title", content: "Lovable App" },
-      { property: "og:description", content: "Lovable Generated Project" },
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary" },
-      { name: "twitter:site", content: "@Lovable" },
+      { title: "DT Lab" },
+      { name: "description", content: "Digital Twin Laboratory for Distribution Networks" },
     ],
     links: [
       {
@@ -69,8 +65,23 @@ function RootShell({ children }: { children: React.ReactNode }) {
 
 function RootComponent() {
   useEffect(() => {
-    seedScenariosFromBackend();
-    loadUsersFromBackend();
+    function bootstrap() {
+      const token = getToken();
+      if (!token) return;
+      // Validate JWT; clear if expired/revoked
+      getMeApi().catch(() => clearToken());
+      // Seed stores that require auth (admin-only endpoints will 403 for
+      // non-admin users — stores handle that gracefully)
+      seedScenariosFromBackend();
+      loadUsersFromBackend();
+    }
+
+    bootstrap();
+
+    // Re-run after every login / logout so stores always reflect the
+    // current user's permissions (e.g. admin can now see all users)
+    window.addEventListener("dtlab-auth-change", bootstrap);
+    return () => window.removeEventListener("dtlab-auth-change", bootstrap);
   }, []);
 
   return <Outlet />;

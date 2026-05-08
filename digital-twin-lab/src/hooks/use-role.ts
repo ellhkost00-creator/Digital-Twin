@@ -9,12 +9,11 @@ export function useRole(): { role: Role | null; ready: boolean } {
   useEffect(() => {
     setRole(getCurrentRole());
     setReady(true);
+    // "dtlab-auth-change" fires on setToken() and clearToken()
     const update = () => setRole(getCurrentRole());
-    window.addEventListener("dtlab-role-change", update);
-    window.addEventListener("storage", update);
+    window.addEventListener("dtlab-auth-change", update);
     return () => {
-      window.removeEventListener("dtlab-role-change", update);
-      window.removeEventListener("storage", update);
+      window.removeEventListener("dtlab-auth-change", update);
     };
   }, []);
 

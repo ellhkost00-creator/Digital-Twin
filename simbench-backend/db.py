@@ -105,6 +105,17 @@ def init_db() -> bool:
             conn.execute(text("SELECT 1"))   # verify reachability
         Base.metadata.create_all(_engine)
         _Session = sessionmaker(bind=_engine)
+        # ── Column migrations (safe to run on every startup) ──────────────
+        try:
+            with _engine.connect() as conn:
+                conn.execute(text(
+                    "ALTER TABLE users "
+                    "ADD COLUMN IF NOT EXISTS hashed_password VARCHAR"
+                ))
+                conn.commit()
+            logger.info("Schema migration: hashed_password column ensured")
+        except Exception as mig_exc:
+            logger.warning("Schema migration skipped (non-fatal): %s", mig_exc)
         logger.info("PostgreSQL connected and schema ready")
         return True
     except (OperationalError, SQLAlchemyError, Exception) as exc:
@@ -437,13 +448,14 @@ def delete_scenario(scenario_id: str) -> bool:
 class User(Base):
     __tablename__ = "users"
 
-    id         = Column(String,   primary_key=True)
-    name       = Column(String,   nullable=False)
-    email      = Column(String,   nullable=False, index=True)
-    role       = Column(String,   nullable=False)
-    initials   = Column(String,   nullable=False)
-    is_self    = Column(Boolean,  nullable=False, default=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    id              = Column(String,   primary_key=True)
+    name            = Column(String,   nullable=False)
+    email           = Column(String,   nullable=False, index=True)
+    role            = Column(String,   nullable=False)
+    initials        = Column(String,   nullable=False)
+    is_self         = Column(Boolean,  nullable=False, default=False)
+    hashed_password = Column(String,   nullable=True)
+    created_at      = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
 def _user_to_api(u: "User") -> dict:
@@ -457,6 +469,50 @@ def _user_to_api(u: "User") -> dict:
     }
 
 
+def get_user_by_email(email: str) -> dict | None:
+    """
+    Return a user dict that *includes* hashed_password — for auth use only.
+    Returns None if not found or DB unavailable.
+    """
+    if not db_available():
+        return None
+    try:
+        with _Session() as session:
+            row = session.query(User).filter_by(email=email).first()
+            if row is None:
+                return None
+            return {
+                "id":              row.id,
+                "name":            row.name,
+                "email":           row.email,
+                "role":            row.role,
+                "initials":        row.initials,
+                "is_self":         row.is_self,
+                "hashed_password": row.hashed_password,
+            }
+    except SQLAlchemyError as exc:
+        logger.warning("DB read failed for user by email %s: %s", email, exc)
+        return None
+
+
+def update_user_password(user_id: str, hashed_password: str) -> bool:
+    """Set a new hashed_password for the given user. Returns True on success."""
+    if not db_available():
+        return False
+    try:
+        with _Session() as session:
+            row = session.query(User).filter_by(id=user_id).first()
+            if row is None:
+                return False
+            row.hashed_password = hashed_password
+            session.commit()
+        logger.info("Password updated for user %s", user_id)
+        return True
+    except SQLAlchemyError as exc:
+        logger.warning("Could not update password for user %s: %s", user_id, exc)
+        return False
+
+
 _SEED_USERS = [
     {"id": "u-1", "name": "Marco Rossi",         "email": "marco.rossi@dtlab.io",     "role": "admin",      "initials": "MR", "is_self": True},
     {"id": "u-2", "name": "Dr. Elena Marchetti", "email": "elena.marchetti@dtlab.io", "role": "researcher", "initials": "EM", "is_self": False},
@@ -467,18 +523,38 @@ _SEED_USERS = [
 
 
 def seed_users() -> bool:
+    """
+    Seed the 5 hardcoded users with hashed passwords on first startup.
+    If users already exist but have no hashed_password (legacy rows from
+    before Milestone 1), fill in the default password hash for them.
+    Safe to call multiple times — fully idempotent.
+    """
     if not db_available():
         return False
     try:
+        import bcrypt as _bcrypt
+        _default_pw = os.getenv("SEED_USER_PASSWORD", "DtLab2025!")
+        hashed = _bcrypt.hashpw(_default_pw.encode("utf-8"), _bcrypt.gensalt()).decode("utf-8")
+
         with _Session() as session:
-            if session.query(User).count() > 0:
+            count = session.query(User).count()
+            if count == 0:
+                for u in _SEED_USERS:
+                    session.add(User(**u, hashed_password=hashed))
+                session.commit()
+                logger.info("Seeded %d users into PostgreSQL", len(_SEED_USERS))
+                return True
+            else:
+                # Back-fill hashed_password for any legacy rows that lack it
+                rows = session.query(User).filter(User.hashed_password.is_(None)).all()
+                for row in rows:
+                    row.hashed_password = hashed
+                if rows:
+                    session.commit()
+                    logger.info(
+                        "Back-filled hashed_password for %d existing user(s)", len(rows)
+                    )
                 return False
-        with _Session() as session:
-            for u in _SEED_USERS:
-                session.add(User(**u))
-            session.commit()
-        logger.info("Seeded %d users into PostgreSQL", len(_SEED_USERS))
-        return True
     except SQLAlchemyError as exc:
         logger.warning("Failed to seed users: %s", exc)
         return False
@@ -504,6 +580,7 @@ def save_user(
     role: str,
     initials: str,
     is_self: bool = False,
+    hashed_password: str | None = None,
 ) -> dict | None:
     if not db_available():
         return None
@@ -512,8 +589,11 @@ def save_user(
             existing = session.query(User).filter_by(email=email).first()
             if existing:
                 return _user_to_api(existing)
-            row = User(id=id, name=name, email=email, role=role,
-                       initials=initials, is_self=is_self)
+            row = User(
+                id=id, name=name, email=email, role=role,
+                initials=initials, is_self=is_self,
+                hashed_password=hashed_password,
+            )
             session.add(row)
             session.commit()
             session.refresh(row)

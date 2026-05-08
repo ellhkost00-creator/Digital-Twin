@@ -23,9 +23,11 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Users as UsersIcon, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { getCurrentUserInfo } from "@/lib/auth";
 import type { Role } from "@/lib/auth";
 import {
   getUsers,
+  loadUsersFromBackend,
   removeUser,
   subscribeUsers,
   updateUserRole,
@@ -47,8 +49,11 @@ const roles: Role[] = ["admin", "researcher", "student"];
 function UsersPage() {
   const [users, setUsers] = useState<ManagedUser[]>(() => getUsers());
   const [pendingDelete, setPendingDelete] = useState<ManagedUser | null>(null);
+  const currentEmail = getCurrentUserInfo()?.email ?? null;
 
   useEffect(() => {
+    // Always fetch fresh from the backend when this page mounts
+    loadUsersFromBackend();
     setUsers(getUsers());
     return subscribeUsers(() => setUsers(getUsers()));
   }, []);
@@ -106,7 +111,7 @@ function UsersPage() {
                     <div>
                       <div className="font-medium flex items-center gap-2">
                         {u.name}
-                        {u.isSelf && (
+                        {u.email === currentEmail && (
                           <span className="text-[10px] uppercase tracking-wider text-primary font-semibold">
                             You
                           </span>
@@ -120,7 +125,7 @@ function UsersPage() {
                   <Select
                     value={u.role}
                     onValueChange={(v) => handleRoleChange(u.id, v as Role)}
-                    disabled={u.isSelf}
+                    disabled={u.email === currentEmail}
                   >
                     <SelectTrigger className="h-9 w-36 capitalize">
                       <SelectValue />
@@ -140,8 +145,8 @@ function UsersPage() {
                     size="sm"
                     className="text-destructive hover:text-destructive hover:bg-destructive/10 disabled:opacity-40"
                     onClick={() => setPendingDelete(u)}
-                    disabled={u.isSelf}
-                    title={u.isSelf ? "You cannot delete your own account" : "Delete user"}
+                    disabled={u.email === currentEmail}
+                    title={u.email === currentEmail ? "You cannot delete your own account" : "Delete user"}
                   >
                     <Trash2 className="h-4 w-4 mr-1.5" />
                     Delete
