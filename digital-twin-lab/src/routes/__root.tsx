@@ -1,4 +1,4 @@
-import { Outlet, Link, createRootRoute, HeadContent, Scripts } from "@tanstack/react-router";
+import { Outlet, Link, createRootRoute, HeadContent, Scripts, redirect } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { seedScenariosFromBackend } from "@/lib/scenarios-store";
 import { loadUsersFromBackend } from "@/lib/users-store";
@@ -30,6 +30,17 @@ function NotFoundComponent() {
 }
 
 export const Route = createRootRoute({
+  // Redirect unauthenticated users to the login page for every route except
+  // "/" itself.  Only enforced client-side: localStorage is unavailable during
+  // SSR, so we skip the check on the server to avoid spurious redirects on
+  // every page refresh.
+  beforeLoad: ({ location }) => {
+    if (typeof window === "undefined") return; // SSR — no localStorage
+    const isLoginPage = location.pathname === "/" || location.pathname === "";
+    if (!isLoginPage && !getToken()) {
+      throw redirect({ to: "/" });
+    }
+  },
   head: () => ({
     meta: [
       { charSet: "utf-8" },

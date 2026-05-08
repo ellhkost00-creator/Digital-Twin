@@ -39,18 +39,19 @@ export const Route = createFileRoute("/dashboard")({
       { name: "description", content: "Operational overview of networks, runs and violations." },
     ],
   }),
-  loader: () => fetchSimbenchNetworks(),
   component: Dashboard,
 });
 
 function Dashboard() {
-  const loaderData = Route.useLoaderData();
-
-  // Seed the in-memory networks store with backend data so this page and
-  // others (Network Library, comparison, results) share the same source.
+  // Fetch networks client-side so the Bearer token (stored in localStorage)
+  // is always available.  The route loader was removed because it runs on the
+  // server during SSR where localStorage — and therefore the auth token — is
+  // not accessible, which caused networks to always be empty on page refresh.
   useEffect(() => {
-    seedNetworks(loaderData.networks);
-  }, [loaderData.networks]);
+    fetchSimbenchNetworks().then(({ networks }) => {
+      if (networks.length > 0) seedNetworks(networks);
+    }).catch(() => {});
+  }, []);
 
   const networks = useNetworks();
   const runs = useRuns();

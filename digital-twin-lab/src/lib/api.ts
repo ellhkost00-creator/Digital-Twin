@@ -121,10 +121,18 @@ export async function fetchSimbenchNetworks(): Promise<{
   serviceUrl: string;
   error: string | null;
 }> {
-  const response = await apiFetch(`${API_BASE}/networks`);
-  if (!response.ok) throw new Error("Failed to fetch networks");
-  const networks = (await response.json()) as Network[];
-  return { networks, serviceUrl: API_BASE, error: null };
+  try {
+    const response = await apiFetch(`${API_BASE}/networks`);
+    if (!response.ok) {
+      return { networks: [], serviceUrl: API_BASE, error: `Failed to fetch networks (${response.status})` };
+    }
+    const networks = (await response.json()) as Network[];
+    return { networks, serviceUrl: API_BASE, error: null };
+  } catch (err) {
+    // Backend unreachable — return empty list so the dashboard still renders
+    const msg = err instanceof Error ? err.message : "Failed to fetch networks";
+    return { networks: [], serviceUrl: API_BASE, error: msg };
+  }
 }
 
 export interface RunSimulationParams {

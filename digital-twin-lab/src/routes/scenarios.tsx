@@ -312,7 +312,7 @@ function ScenarioBuilder() {
                           (mode === "balanced" ? "border-primary bg-primary/5" : "border-border hover:bg-muted/40")
                         }
                       >
-                        <RadioGroupItem value="balanced" className="mt-1" />
+                        <RadioGroupItem value="balanced" className="hidden" />
                         <div>
                           <div className="font-medium text-sm">Balanced</div>
                           <div className="text-xs text-muted-foreground">Symmetric three-phase</div>
