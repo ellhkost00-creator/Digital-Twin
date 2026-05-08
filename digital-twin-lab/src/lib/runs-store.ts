@@ -144,6 +144,20 @@ export interface CreateRunInput {
 }
 
 /**
+ * Patch an existing run's mutable fields (status, progress).
+ * No-op if the run id is not found.
+ */
+export function updateRun(
+  id: string,
+  patch: Partial<Pick<Run, "status" | "progress">>,
+): void {
+  const idx = runsArray.findIndex((r) => r.id === id);
+  if (idx === -1) return;
+  Object.assign(runsArray[idx], patch);
+  emit();
+}
+
+/**
  * Append a run to the in-memory store after a simulation completes.
  * If a run with the same id already exists (e.g. seeded from backend),
  * update it in place so the UI reflects the latest startedAt time.

@@ -1,5 +1,5 @@
-import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useEffect, useState, useCallback } from "react";
 import { AppShell, PageHeader, StatusBadge } from "@/components/app-shell";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -22,54 +22,34 @@ export const Route = createFileRoute("/networks/")({
       { name: "description", content: "SimBench distribution network models loaded from the SimBench service." },
     ],
   }),
-  loader: () => fetchSimbenchNetworks(),
-  errorComponent: ({ error }) => {
-    const router = useRouter();
-    return (
-      <AppShell>
-        <Card className="p-6">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="h-5 w-5 text-destructive mt-0.5" />
-            <div className="flex-1">
-              <div className="font-medium">Failed to load networks</div>
-              <div className="text-sm text-muted-foreground mt-1">{error.message}</div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-4"
-                onClick={() => router.invalidate()}
-              >
-                <RefreshCw className="h-4 w-4 mr-2" /> Retry
-              </Button>
-            </div>
-          </div>
-        </Card>
-      </AppShell>
-    );
-  },
-  notFoundComponent: () => (
-    <AppShell>
-      <Card className="p-6 text-sm text-muted-foreground">Network Library not found.</Card>
-    </AppShell>
-  ),
   component: NetworkLibrary,
 });
 
 function NetworkLibrary() {
-  const loaderData = Route.useLoaderData();
-  const router = useRouter();
-
-  // Seed the in-memory store so other pages (detail, dashboard, comparison)
-  // can read from `networks` synchronously.
-  useEffect(() => {
-    seedNetworks(loaderData.networks);
-  }, [loaderData.networks]);
-
-  const storeNetworks = useNetworks();
-  const networks = storeNetworks.length > 0 ? storeNetworks : loaderData.networks;
+  const networks = useNetworks();
+  const [error, setError] = useState<string | null>(null);
+  const [fetching, setFetching] = useState(false);
   const [q, setQ] = useState("");
   const [type, setType] = useState<string>("all");
   const [status, setStatus] = useState<string>("all");
+
+  // Fetch networks client-side so the Bearer token (localStorage) is always
+  // available. The route loader was removed because it runs on the server
+  // during SSR where localStorage — and therefore the auth token — is not
+  // accessible, which caused networks to always be empty on page refresh.
+  const loadNetworks = useCallback(() => {
+    setFetching(true);
+    setError(null);
+    fetchSimbenchNetworks()
+      .then(({ networks: nets, error: err }) => {
+        if (nets.length > 0) seedNetworks(nets);
+        if (err) setError(err);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : "Failed to fetch networks"))
+      .finally(() => setFetching(false));
+  }, []);
+
+  useEffect(() => { loadNetworks(); }, [loadNetworks]);
 
   const filtered = networks.filter(
     (n) =>
@@ -79,7 +59,6 @@ function NetworkLibrary() {
   );
 
   const isEmpty = networks.length === 0;
-  const serviceError = loaderData.error;
 
   return (
     <AppShell>
@@ -87,27 +66,27 @@ function NetworkLibrary() {
         title="Network Library"
         description="Catalog of SimBench distribution network models. Click a network for asset details."
         actions={
-          <Button variant="outline" onClick={() => router.invalidate()}>
-            <RefreshCw className="h-4 w-4 mr-2" /> Refresh
+          <Button variant="outline" onClick={loadNetworks} disabled={fetching}>
+            <RefreshCw className={"h-4 w-4 mr-2" + (fetching ? " animate-spin" : "")} /> Refresh
           </Button>
         }
       />
 
-      {isEmpty && (
+      {(isEmpty || error) && (
         <Card className="p-6 mb-6">
           <div className="flex items-start gap-3">
-            {serviceError ? (
+            {error ? (
               <AlertTriangle className="h-5 w-5 text-destructive mt-0.5" />
             ) : (
               <Upload className="h-5 w-5 text-muted-foreground mt-0.5" />
             )}
             <div className="flex-1">
               <div className="font-medium">
-                {serviceError ? "Couldn't reach SimBench service" : "No networks loaded yet"}
+                {error ? "Couldn't reach SimBench service" : "No networks loaded yet"}
               </div>
               <div className="text-sm text-muted-foreground mt-1">
-                {serviceError
-                  ? serviceError
+                {error
+                  ? error
                   : "Configure SIMBENCH_SERVICE_URL in project secrets and point it at your Python service to load real SimBench LV networks."}
               </div>
             </div>
@@ -201,7 +180,7 @@ function NetworkLibrary() {
               {isEmpty && (
                 <tr>
                   <td colSpan={8} className="text-center py-12 text-muted-foreground text-sm">
-                    No networks loaded.
+                    {fetching ? "Loading networks…" : "No networks loaded."}
                   </td>
                 </tr>
               )}
