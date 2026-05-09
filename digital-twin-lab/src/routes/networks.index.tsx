@@ -11,9 +11,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useNetworks, seedNetworks } from "@/lib/networks-store";
+import { useNetworks, seedNetworks, deleteNetwork } from "@/lib/networks-store";
 import { fetchSimbenchNetworks } from "@/lib/api";
-import { Upload, Search, ChevronRight, AlertTriangle, RefreshCw } from "lucide-react";
+import { useRole } from "@/hooks/use-role";
+import { Upload, Search, ChevronRight, AlertTriangle, RefreshCw, Trash2 } from "lucide-react";
 
 export const Route = createFileRoute("/networks/")({
   head: () => ({
@@ -27,11 +28,15 @@ export const Route = createFileRoute("/networks/")({
 
 function NetworkLibrary() {
   const networks = useNetworks();
+  const { role } = useRole();
+  const isAdmin = role === "admin";
   const [error, setError] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
   const [q, setQ] = useState("");
   const [type, setType] = useState<string>("all");
   const [status, setStatus] = useState<string>("all");
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   // Fetch networks client-side so the Bearer token (localStorage) is always
   // available. The route loader was removed because it runs on the server
@@ -50,6 +55,18 @@ function NetworkLibrary() {
   }, []);
 
   useEffect(() => { loadNetworks(); }, [loadNetworks]);
+
+  const handleDelete = async (id: string) => {
+    setDeleting(id);
+    try {
+      await deleteNetwork(id);
+    } catch (e) {
+      console.error("Delete failed", e);
+    } finally {
+      setDeleting(null);
+      setConfirmId(null);
+    }
+  };
 
   const filtered = networks.filter(
     (n) =>
@@ -160,13 +177,46 @@ function NetworkLibrary() {
                     {n.buses}b · {n.lines}l · {n.transformers}t
                   </td>
                   <td className="py-3 px-4">
-                    <Link
-                      to="/networks/$networkId"
-                      params={{ networkId: n.id }}
-                      className="text-muted-foreground hover:text-primary inline-flex"
-                    >
-                      <ChevronRight className="h-4 w-4" />
-                    </Link>
+                    <div className="flex items-center justify-end gap-1">
+                      <Link
+                        to="/networks/$networkId"
+                        params={{ networkId: n.id }}
+                        className="text-muted-foreground hover:text-primary inline-flex"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </Link>
+                      {isAdmin && (confirmId === n.id ? (
+                        <>
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            disabled={deleting === n.id}
+                            onClick={() => handleDelete(n.id)}
+                            className="h-7 px-2 text-xs"
+                          >
+                            {deleting === n.id ? "Deleting…" : "Confirm"}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setConfirmId(null)}
+                            className="h-7 px-2 text-xs"
+                          >
+                            Cancel
+                          </Button>
+                        </>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setConfirmId(n.id)}
+                          className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                          title="Delete network"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      ))}
+                    </div>
                   </td>
                 </tr>
               ))}

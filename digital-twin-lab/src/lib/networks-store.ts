@@ -5,6 +5,7 @@
 import { useSyncExternalStore } from "react";
 import { networks as networksArray, type Network } from "./mock-data";
 import { seedRunsFromBackend } from "./runs-store";
+import { deleteNetworkApi } from "./api";
 
 type Listener = () => void;
 const listeners = new Set<Listener>();
@@ -50,6 +51,24 @@ export function seedNetworks(list: Network[]): void {
   emit();
   // Seed historical runs from backend storage now that networks are loaded.
   seedRunsFromBackend();
+}
+
+/** Remove a network from the in-memory store immediately (no API call). */
+export function removeNetwork(networkId: string): void {
+  const idx = networksArray.findIndex((n) => n.id === networkId);
+  if (idx !== -1) {
+    networksArray.splice(idx, 1);
+    emit();
+  }
+}
+
+/**
+ * Delete a network from the backend (DB + networks.json) and remove it from
+ * the in-memory store. Throws on network/API error.
+ */
+export async function deleteNetwork(networkId: string): Promise<void> {
+  await deleteNetworkApi(networkId);
+  removeNetwork(networkId);
 }
 
 let nextConvertedCounter = 100;

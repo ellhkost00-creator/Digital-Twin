@@ -79,6 +79,7 @@ class SimulationRun(Base):
     violations_line_overload  = Column(Integer,  nullable=True)
     violations_trafo_overload = Column(Integer,  nullable=True)
     violations_total          = Column(Integer,  nullable=True)
+    created_by                = Column(String,   nullable=True)
     created_at                = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
@@ -112,8 +113,12 @@ def init_db() -> bool:
                     "ALTER TABLE users "
                     "ADD COLUMN IF NOT EXISTS hashed_password VARCHAR"
                 ))
+                conn.execute(text(
+                    "ALTER TABLE simulation_runs "
+                    "ADD COLUMN IF NOT EXISTS created_by VARCHAR"
+                ))
                 conn.commit()
-            logger.info("Schema migration: hashed_password column ensured")
+            logger.info("Schema migration: hashed_password + created_by columns ensured")
         except Exception as mig_exc:
             logger.warning("Schema migration skipped (non-fatal): %s", mig_exc)
         logger.info("PostgreSQL connected and schema ready")
@@ -156,6 +161,7 @@ def _run_to_api(run: SimulationRun) -> dict:
                 if run.has_trafo else None
             ),
         },
+        "created_by": run.created_by,
     }
 
 
@@ -198,6 +204,7 @@ def save_run(
     violations_line_overload: int | None = None,
     violations_trafo_overload: int | None = None,
     violations_total: int | None = None,
+    created_by: str | None = None,
 ) -> bool:
     """
     Persist a completed simulation run.
@@ -218,6 +225,7 @@ def save_run(
                 violations_line_overload=violations_line_overload,
                 violations_trafo_overload=violations_trafo_overload,
                 violations_total=violations_total,
+                created_by=created_by,
             ))
             session.commit()
         logger.info("Run %s saved to PostgreSQL", run_id)
@@ -351,6 +359,25 @@ def save_network(data: dict) -> bool:
         return False
 
 
+def delete_network(network_id: str) -> bool:
+    """
+    Delete a network record from PostgreSQL by id.
+    Returns True if deleted, False if not found or DB unavailable.
+    """
+    if not db_available():
+        return False
+    try:
+        with _Session() as session:
+            row = session.query(NetworkRecord).filter_by(id=network_id).first()
+            if not row:
+                return False
+            session.delete(row)
+            session.commit()
+        logger.info("Network %s deleted from PostgreSQL", network_id)
+        return True
+    except SQLAlchemyError as exc:
+        logger.warning("Could not delete network %s: %s", network_id, exc)
+        return False
 
 
 # ---------------------------------------------------------------------------

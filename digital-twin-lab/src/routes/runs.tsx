@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { seedNetworks } from "@/lib/networks-store";
 import { fetchSimbenchNetworks } from "@/lib/api";
 import { AppShell, PageHeader, StatusBadge } from "@/components/app-shell";
@@ -14,11 +14,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
-import { useRuns, deleteRun } from "@/lib/runs-store";
+import { useRuns, deleteRun, seedRunsFromBackend } from "@/lib/runs-store";
+import { useRole } from "@/hooks/use-role";
 import { Search, RefreshCw, BarChart3, Trash2 } from "lucide-react";
 
 export const Route = createFileRoute("/runs")({
-  loader: () => fetchSimbenchNetworks(),
   validateSearch: (search: Record<string, unknown>): { highlight?: string } => ({
     highlight: typeof search.highlight === "string" ? search.highlight : undefined,
   }),
@@ -32,12 +32,9 @@ export const Route = createFileRoute("/runs")({
 });
 
 function SimulationRuns() {
-  const loaderData = Route.useLoaderData();
-  useEffect(() => {
-    seedNetworks(loaderData.networks);
-  }, [loaderData.networks]);
-
   const runs = useRuns();
+  const { role } = useRole();
+  const isAdmin = role === "admin";
   const { highlight } = Route.useSearch();
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("all");
@@ -45,6 +42,25 @@ function SimulationRuns() {
   const [flashRunId, setFlashRunId] = useState<string | undefined>(highlight);
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Fetch networks + runs client-side so the Bearer token (localStorage) is
+  // always available. The route loader was removed because it runs on the
+  // server during SSR where localStorage is not accessible.
+  const loadData = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const { networks: nets } = await fetchSimbenchNetworks();
+      if (nets.length > 0) seedNetworks(nets);
+      await seedRunsFromBackend();
+    } catch {
+      // silent — store already has whatever was loaded before
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => { loadData(); }, [loadData]);
 
   const handleDelete = async (id: string) => {
     setDeleting(id);
@@ -84,8 +100,8 @@ function SimulationRuns() {
         title="Simulation Runs"
         description="Monitor the simulation queue and inspect completed jobs."
         actions={
-          <Button variant="outline">
-            <RefreshCw className="h-4 w-4 mr-2" /> Refresh
+          <Button variant="outline" onClick={loadData} disabled={refreshing}>
+            <RefreshCw className={"h-4 w-4 mr-2" + (refreshing ? " animate-spin" : "")} /> Refresh
           </Button>
         }
       />
@@ -186,7 +202,7 @@ function SimulationRuns() {
                           </Link>
                         </Button>
                       )}
-                      {confirmId === r.id ? (
+                      {isAdmin && (confirmId === r.id ? (
                         <>
                           <Button
                             variant="destructive"
@@ -216,7 +232,7 @@ function SimulationRuns() {
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
-                      )}
+                      ))}
                     </div>
                   </td>
                 </tr>

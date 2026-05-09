@@ -28,7 +28,6 @@ import {
   Legend,
 } from "recharts";
 import {
-  Download,
   TrendingDown,
   TrendingUp,
   Cable,
@@ -346,12 +345,6 @@ function Results() {
 
       {state === "ready" && (
         <>
-          <div className="flex items-center justify-end mb-4">
-            <Button variant="outline" size="sm">
-              <Download className="h-4 w-4" /> Export
-            </Button>
-          </div>
-
           {/* Topology overview + Current Results View side by side */}
           <div className="grid gap-3 lg:grid-cols-[2fr_1fr] mb-6">
             <NetworkTopology

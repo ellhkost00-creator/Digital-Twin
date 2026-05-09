@@ -229,6 +229,7 @@ export interface BackendRun {
   run_id: string;
   started_at: string | null;
   duration_seconds: number | null;
+  created_by: string | null;
   violations: {
     under_voltage: number | null;
     over_voltage: number | null;
@@ -296,6 +297,11 @@ export async function deleteRunApi(runId: string, networkId: string): Promise<vo
   const url = `${API_BASE}/runs/${encodeURIComponent(runId)}?network_id=${encodeURIComponent(networkId)}`;
   const res = await apiFetch(url, { method: "DELETE" });
   if (!res.ok && res.status !== 204) throw new Error(`Failed to delete run (${res.status})`);
+}
+
+export async function deleteNetworkApi(networkId: string): Promise<void> {
+  const res = await apiFetch(`${API_BASE}/networks/${encodeURIComponent(networkId)}`, { method: "DELETE" });
+  if (!res.ok && res.status !== 204) throw new Error(`Failed to delete network (${res.status})`);
 }
 
 export interface ConvertOpenDSSResult {

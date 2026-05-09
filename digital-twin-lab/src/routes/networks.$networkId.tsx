@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { fetchSimbenchNetworks, API_BASE } from "@/lib/api";
 import { useNetworks, seedNetworks } from "@/lib/networks-store";
-import { ArrowLeft, Cable, Zap, Box, Plug, Download, Play, Loader2 } from "lucide-react";
+import { ArrowLeft, Cable, Zap, Box, Plug, Play, Loader2 } from "lucide-react";
 import { useRole } from "@/hooks/use-role";
 import { cn } from "@/lib/utils";
 
@@ -95,7 +95,6 @@ function NetworkDetail() {
         description={`${n.type} network · ${n.voltage} · ${n.version}`}
         actions={
           <>
-            <Button variant="outline"><Download className="h-4 w-4 mr-2" /> Export</Button>
             {canCreateScenario && (
               <Button asChild>
                 <Link to="/scenarios" search={{ networkId: n.id }}>

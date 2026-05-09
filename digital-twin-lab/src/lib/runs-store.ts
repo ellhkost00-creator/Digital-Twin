@@ -66,7 +66,7 @@ export async function seedRunsFromBackend(): Promise<void> {
           : `${parsed.year}-${String(parsed.month).padStart(2, "0")}-${String(parsed.day).padStart(2, "0")}`
         : br.run_id;
 
-      const run: Run & { networkId: string } = {
+      const run: Run & { networkId: string; createdBy?: string } = {
         id: br.run_id,
         scenarioId: "",
         scenarioName: horizonLabel ? `${horizonLabel} · ${dateLabel}` : br.run_id,
@@ -77,6 +77,7 @@ export async function seedRunsFromBackend(): Promise<void> {
         duration: br.duration_seconds != null ? fmtDuration(br.duration_seconds) : "—",
         progress: 100,
         violations: br.violations?.total ?? 0,
+        createdBy: br.created_by ?? undefined,
       };
 
       runsArray.push(run);
@@ -141,6 +142,8 @@ export interface CreateRunInput {
   durationSeconds?: number;
   /** Total violation count from the backend response. */
   violations?: number;
+  /** Name of the user who triggered the run — persisted so it survives refresh. */
+  createdBy?: string;
 }
 
 /**
@@ -186,7 +189,7 @@ export function createRun(input: CreateRunInput): string {
   const net = scn ? networks.find((n) => n.id === scn.networkId) : undefined;
   const id = input.runId ?? nextRunId();
 
-  const newRun: Run & { networkId?: string } = {
+  const newRun: Run & { networkId?: string; createdBy?: string } = {
     id,
     scenarioId: input.scenarioId,
     scenarioName: input.scenarioName ?? scn?.name ?? "Custom scenario",
@@ -197,6 +200,7 @@ export function createRun(input: CreateRunInput): string {
     duration: input.durationSeconds != null ? fmtDuration(input.durationSeconds) : "—",
     progress: input.status === "completed" || !input.status ? 100 : 0,
     violations: input.violations ?? 0,
+    createdBy: input.createdBy,
   };
 
   // If already seeded from backend, replace it so startedAt is updated.

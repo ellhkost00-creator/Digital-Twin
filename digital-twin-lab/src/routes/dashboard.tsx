@@ -111,31 +111,34 @@ function Dashboard() {
   }, [runs, networks.length]);
 
   const networkOverview = useMemo(() => {
-    return networks.slice(0, 5).map((n) => {
-      const netRuns = runs.filter((r) => r.networkName.includes(n.name.split(" ")[0]));
-      const last = netRuns[0];
-      // Sum violations reported in run metadata
-      const violationCount = netRuns.reduce(
-        (sum, r) => sum + ((r as typeof r & { violations?: number }).violations ?? 0),
-        0,
-      );
-      return {
-        id: n.id,
-        name: n.name,
-        lastStatus: (last?.status ?? "—") as string,
-        violations: violationCount,
-      };
-    });
+    return networks
+      .map((n) => {
+        const netRuns = runs.filter(
+          (r) => (r as typeof r & { networkId?: string }).networkId === n.id,
+        );
+        const last = netRuns[0];
+        return {
+          id: n.id,
+          name: n.name,
+          lastStatus: (last?.status ?? "—") as string,
+          runCount: netRuns.length,
+        };
+      })
+      .sort((a, b) => b.runCount - a.runCount)
+      .slice(0, 7);
   }, [runs, networks]);
 
   const activity = useMemo(() => {
     const items: { icon: typeof PlayCircle; tone: string; text: string; time: string; user: string }[] = [];
-    const userForRun = (runId: string, scenarioName: string) => {
-      const scn = scenarios.find((s) => s.name === scenarioName);
-      return scn?.createdBy ?? "System";
+    const userForRun = (r: { scenarioId: string; scenarioName: string; createdBy?: string }) => {
+      if (r.createdBy) return r.createdBy;
+      const scn =
+        (r.scenarioId ? scenarios.find((s) => s.id === r.scenarioId) : null) ??
+        scenarios.find((s) => s.name === r.scenarioName);
+      return scn?.createdBy ?? "—";
     };
-    runs.slice(0, 4).forEach((r) => {
-      const user = userForRun(r.id, r.scenarioName);
+    runs.slice(0, 6).forEach((r) => {
+      const user = userForRun(r);
       if (r.status === "completed") {
         items.push({
           icon: CheckCircle2,
@@ -162,26 +165,6 @@ function Dashboard() {
         });
       }
     });
-    const lastScn = scenarios[scenarios.length - 1];
-    if (lastScn) {
-      items.push({
-        icon: FlaskConical,
-        tone: "text-primary",
-        text: `Scenario "${lastScn.name}" created`,
-        time: lastScn.createdAt,
-        user: lastScn.createdBy,
-      });
-    }
-    const lastNet = networks[networks.length - 1];
-    if (lastNet) {
-      items.push({
-        icon: Upload,
-        tone: "text-info",
-        text: `Network "${lastNet.name}" uploaded`,
-        time: lastNet.created,
-        user: "—",
-      });
-    }
     // Highlight the most recent run that had violations
     const violatingRun = runs
       .filter((r) => r.status === "completed" && ((r as typeof r & { violations?: number }).violations ?? 0) > 0)
@@ -192,7 +175,7 @@ function Dashboard() {
         tone: "text-warning-foreground",
         text: `Violations detected on run ${violatingRun.id} (${(violatingRun as typeof violatingRun & { violations?: number }).violations} total)`,
         time: violatingRun.startedAt,
-        user: userForRun(violatingRun.id, violatingRun.scenarioName),
+        user: userForRun(violatingRun),
       });
     }
     return items.slice(0, 6);
@@ -213,7 +196,7 @@ function Dashboard() {
   const queuedCount = runs.filter((r) => r.status === "queued").length;
   const summary: SummaryCard[] = [
     { label: "Networks", value: stats.networks, sub: `${networks.filter((n) => n.status === "validated").length} validated`, icon: NetIcon, accent: "neutral", to: "/networks" },
-    { label: "Scenarios", value: stats.scenarios, sub: "ready to run", icon: FlaskConical, accent: "neutral", to: "/scenarios" },
+    { label: "Scenarios", value: stats.scenarios, sub: "ready to run", icon: FlaskConical, accent: "neutral", to: "/runs" },
     { label: "Active Runs", value: stats.active, sub: `${runningCount} running · ${queuedCount} queued`, icon: PlayCircle, accent: "info", to: "/runs" },
     
     { label: "Failed Runs", value: stats.failed, sub: stats.failed > 0 ? "needs attention" : "all healthy", icon: XCircle, accent: "destructive", to: "/runs" },
@@ -232,7 +215,7 @@ function Dashboard() {
   const { role } = useRole();
 
   const allActions = [
-    { key: "upload", label: "Upload Network", icon: Upload, to: "/networks" as const },
+    { key: "upload", label: "Inspect Networks", icon: NetIcon, to: "/networks" as const },
     { key: "scenario", label: "Create Scenario", icon: FlaskConical, to: "/scenarios" as const },
     { key: "run", label: "Start New Run", icon: PlayCircle, to: "/scenarios" as const },
     { key: "results", label: "Analytics", icon: ChartSpline, to: "/results" as const },
@@ -523,7 +506,7 @@ function Dashboard() {
                 <tr className="text-left text-xs uppercase tracking-wider text-muted-foreground border-b border-border">
                   <th className="py-2 pr-4 font-medium">Network</th>
                   <th className="py-2 pr-4 font-medium text-center">Last Run</th>
-                  <th className="py-2 pr-4 font-medium text-center">Violations</th>
+                  <th className="py-2 pr-4 font-medium text-center">Runs</th>
                 </tr>
               </thead>
               <tbody>
@@ -533,7 +516,7 @@ function Dashboard() {
                     <td className="py-2.5 pr-4 text-center">
                       {n.lastStatus === "—" ? <span className="text-xs text-muted-foreground">—</span> : <StatusBadge status={n.lastStatus} />}
                     </td>
-                    <td className="py-2.5 pr-4 font-mono tabular-nums text-center">{n.violations}</td>
+                    <td className="py-2.5 pr-4 font-mono tabular-nums text-center">{n.runCount}</td>
                   </tr>
                 ))}
               </tbody>

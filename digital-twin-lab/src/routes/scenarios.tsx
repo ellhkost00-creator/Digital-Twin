@@ -164,6 +164,7 @@ function ScenarioBuilder() {
           networkName: _networks.find((n) => n.id === _networkId)?.name,
           runId,
           networkId: _networkId,
+          createdBy: pendingScenario.createdBy,
           startedAtIso: typeof candidate.started_at === "string" ? candidate.started_at : undefined,
           durationSeconds: typeof candidate.duration_seconds === "number" ? candidate.duration_seconds : undefined,
           violations: typeof candidate.violations === "object" && candidate.violations !== null
@@ -186,6 +187,7 @@ function ScenarioBuilder() {
       runId: tempRunId,
       networkId,
       status: initialStatus,
+      createdBy: pendingScenario.createdBy,
     });
 
     setSubmitPhase(initialStatus);
@@ -235,6 +237,7 @@ function ScenarioBuilder() {
           networkName: _networks.find((n) => n.id === _networkId)?.name,
           runId: result.run_id,
           networkId: _networkId,
+          createdBy: pendingScenario.createdBy,
           durationSeconds: result.duration_seconds,
           violations:
             (result.violations.under_voltage ?? 0) +
@@ -257,6 +260,7 @@ function ScenarioBuilder() {
       runId: tempRunId,
       networkId,
       status: initialStatus,
+      createdBy: pendingScenario.createdBy,
     });
 
     setOpendssRunState({ phase: initialStatus });
@@ -362,7 +366,7 @@ function ScenarioBuilder() {
                   <div className="text-sm font-semibold">Simulation horizon</div>
                 </div>
                 <p className="text-xs text-muted-foreground mb-4">
-                  OpenDSS simulates a full day in 48 half-hour steps.
+                  Simulation of a full day in 48 half-hour steps.
                 </p>
 
                 {/* Horizon selector — Day locked, Week/Month unavailable */}
@@ -399,7 +403,7 @@ function ScenarioBuilder() {
                       max={2100}
                       value={year}
                       onChange={(e) => setYear(Number(e.target.value) || 2016)}
-                      disabled={isRunning}
+                      disabled
                     />
                   </div>
                   <div className="space-y-2">
@@ -533,6 +537,7 @@ function ScenarioBuilder() {
                       max={2100}
                       value={year}
                       onChange={(e) => setYear(Number(e.target.value) || 2016)}
+                      disabled
                     />
                   </div>
                   <div className="space-y-2">

@@ -19,7 +19,7 @@ from db import (
     get_db_scenarios, save_scenario, delete_scenario,
     get_db_users, save_user, update_user_role, delete_user, seed_users,
     save_validation_metrics, get_latest_validation,
-    init_db, save_network, save_run, delete_run, seed_networks_from_file,
+    init_db, save_network, delete_network, save_run, delete_run, seed_networks_from_file,
     get_user_by_email, update_user_password,
 )
 from auth_utils import (
@@ -746,7 +746,7 @@ def simulate_opendss(request: SimulateOpenDSSRequest, _cu: dict = Depends(get_cu
     }
 
 
-NANDO_NETWORK_TYPES = {"1": "Rural", "2": "Rural", "3": "Urban", "4": "Urban"}
+NANDO_NETWORK_TYPES = {"1": "Mixed", "2": "Mixed", "3": "Mixed", "4": "Mixed"}
 
 
 def _upsert_networks_json(record: dict) -> None:
@@ -907,6 +907,7 @@ def run_opendss_simulation(network_id: str, request: OpenDSSRunRequest, _cu: dic
         violations_over_voltage=v["over_voltage"],
         violations_line_overload=v["line_overload"],
         violations_trafo_overload=v["trafo_overload"],
+        created_by=_cu.get("name"),
         violations_total=v["total"],
     )
 
@@ -1134,7 +1135,7 @@ def list_runs(_cu: dict = Depends(get_current_user)):
 
 
 @app.delete("/runs/{run_id}", status_code=204)
-def delete_run_endpoint(run_id: str, network_id: str, _cu: dict = Depends(get_current_user)):
+def delete_run_endpoint(run_id: str, network_id: str, _cu: dict = Depends(require_admin)):
     """
     Delete a simulation run: removes the DB record and the on-disk result files.
     Requires `network_id` as a query parameter so the results directory can be located.
@@ -1163,6 +1164,34 @@ def network_detail(network_id: str, _cu: dict = Depends(get_current_user)):
     if db_net is not None:
         return db_net
     raise HTTPException(status_code=404, detail="Network not found")
+
+
+@app.delete("/networks/{network_id}", status_code=204)
+def delete_network_endpoint(network_id: str, _cu: dict = Depends(require_admin)):
+    """
+    Delete a network: removes the DB record and the entry in networks.json.
+    Returns 204 on success. Raises 404 if the network is not found in either store.
+    """
+    # Remove from DB
+    db_deleted = delete_network(network_id)
+
+    # Remove from networks.json (filesystem fallback)
+    json_deleted = False
+    if DATA_FILE.exists():
+        try:
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                all_networks = json.load(f)
+            before = len(all_networks)
+            all_networks = [n for n in all_networks if n.get("id") != network_id]
+            if len(all_networks) < before:
+                with open(DATA_FILE, "w", encoding="utf-8") as f:
+                    json.dump(all_networks, f, indent=2, ensure_ascii=False)
+                json_deleted = True
+        except Exception:
+            pass
+
+    if not db_deleted and not json_deleted:
+        raise HTTPException(status_code=404, detail="Network not found")
 
 
 def compute_violation_counts(out_dir: Path, has_trafo: bool) -> dict:
@@ -1267,6 +1296,7 @@ def run_simulation(network_id: str, request: RunRequest, _cu: dict = Depends(get
             violations_line_overload=v["line_overload"],
             violations_trafo_overload=v["trafo_overload"],
             violations_total=v["total"],
+            created_by=_cu.get("name"),
         )
 
         return {
