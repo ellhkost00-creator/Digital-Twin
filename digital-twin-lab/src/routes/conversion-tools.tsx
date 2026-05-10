@@ -19,6 +19,8 @@ import {
   type ConvertOpenDSSResult, type SimulateOpenDSSResult, type SaveOpenDSSResult,
   type ValidationPhase, type ValidationBusEntry, type ValidationLoadingEntry,
 } from "@/lib/api";
+import { addConversionEvent } from "@/lib/conversions-store";
+import { getCurrentUserInfo } from "@/lib/auth";
 import {
   ResponsiveContainer,
   BarChart,
@@ -198,7 +200,7 @@ function ConversionResult({
     { label: "Buses",        value: result.network_stats.buses,        icon: Bus },
     { label: "Lines",        value: result.network_stats.lines,        icon: Cable },
     { label: "Transformers", value: result.network_stats.transformers, icon: Zap },
-    { label: "Loads",        value: result.network_stats.loads,        icon: Users },
+    
   ];
 
   async function handleQuickSave() {
@@ -206,6 +208,17 @@ function ConversionResult({
     try {
       const r = await saveOpenDSSNetwork(result.network as NetworkId, result.mode);
       setSaveState({ phase: "saved", networkId: r.network_id });
+      // Track as a "conversion" event (no simulation/validation was run).
+      const d = new Date();
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const now = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      addConversionEvent({
+        networkId: r.network_id,
+        networkName: String((r.network as Record<string, unknown>)["name"] ?? r.network_id),
+        convertedAt: now,
+        convertedBy: getCurrentUserInfo()?.name ?? "—",
+        type: "conversion",
+      });
     } catch (err) {
       setSaveState({ phase: "error", message: err instanceof Error ? err.message : String(err) });
     }
@@ -774,6 +787,17 @@ function SimulationStep({
       );
       setSaveState({ phase: "saved", result });
       onStepDone();
+      // Record the conversion event so it appears in the dashboard activity feed.
+      const d = new Date();
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const now = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      addConversionEvent({
+        networkId: result.network_id,
+        networkName: String((result.network as Record<string, unknown>)["name"] ?? result.network_id),
+        convertedAt: now,
+        convertedBy: getCurrentUserInfo()?.name ?? "—",
+        type: "validation",
+      });
     } catch (err) {
       setSaveState({ phase: "error", message: err instanceof Error ? err.message : String(err) });
     }

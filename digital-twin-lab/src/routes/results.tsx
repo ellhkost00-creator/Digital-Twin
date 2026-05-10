@@ -509,7 +509,7 @@ function NetworkTopology({
             key={src}
             src={src}
             title={`${networkName} topology`}
-            style={{ width: 900, height: 720, border: 0, display: "block" }}
+            style={{ width: 1012, height: 720, border: 0, display: "block" }}
             scrolling="no"
             onError={() => setFailed(true)}
           />

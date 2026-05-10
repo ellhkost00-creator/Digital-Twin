@@ -44,7 +44,11 @@
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
       "Bash(npx tsc *)",
-      "Bash(ls /mnt/c/Users/anton/Desktop/DT/digital-twin-lab/src/routes/)"
+      "Bash(ls /mnt/c/Users/anton/Desktop/DT/digital-twin-lab/src/routes/)",
+      "Bash(Remove-Item \"C:\\\\Users\\\\anton\\\\Desktop\\\\DT\\\\simbench-backend\\\\data\\\\plots\\\\opendss-*.html\" -ErrorAction SilentlyContinue)",
+      "Bash(Remove-Item \"C:\\\\Users\\\\anton\\\\Desktop\\\\DT\\\\simbench-backend\\\\data\\\\plots\\\\opendss-*.height\" -ErrorAction SilentlyContinue)",
+      "Bash(Write-Host \"Deleted cached OpenDSS plot files\")",
+      "Bash(rm -f /mnt/c/Users/anton/Desktop/DT/simbench-backend/data/plots/opendss-*.html /mnt/c/Users/anton/Desktop/DT/simbench-backend/data/plots/opendss-*.height && echo \"Deleted\")"
     ]
   }
 }

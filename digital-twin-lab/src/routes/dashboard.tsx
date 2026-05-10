@@ -1,11 +1,12 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AppShell, PageHeader, StatusBadge } from "@/components/app-shell";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useRuns } from "@/lib/runs-store";
 import { useScenarios } from "@/lib/scenarios-store";
 import { useNetworks, seedNetworks } from "@/lib/networks-store";
+import { useConversions } from "@/lib/conversions-store";
 import { fetchSimbenchNetworks } from "@/lib/api";
 import {
   computeSystemOverview,
@@ -42,6 +43,43 @@ export const Route = createFileRoute("/dashboard")({
   component: Dashboard,
 });
 
+/**
+ * A thin progress bar that animates from 0 → target on mount, and smoothly
+ * transitions whenever the value changes afterward.
+ * `delay` staggers the entrance animation for cascade effects (ms).
+ */
+function AnimatedBar({
+  pct,
+  barClass = "bg-primary",
+  delay = 0,
+}: {
+  pct: number;
+  barClass?: string;
+  delay?: number;
+}) {
+  const [width, setWidth] = useState(0);
+  const isFirst = useRef(true);
+
+  useEffect(() => {
+    if (isFirst.current) {
+      isFirst.current = false;
+      const t = setTimeout(() => setWidth(pct), delay);
+      return () => clearTimeout(t);
+    }
+    // Subsequent data changes animate via the CSS transition directly.
+    setWidth(pct);
+  }, [pct, delay]);
+
+  return (
+    <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+      <div
+        className={"h-full rounded-full " + barClass}
+        style={{ width: `${width}%`, transition: "width 0.85s cubic-bezier(0.4, 0, 0.2, 1)" }}
+      />
+    </div>
+  );
+}
+
 function Dashboard() {
   // Fetch networks client-side so the Bearer token (stored in localStorage)
   // is always available.  The route loader was removed because it runs on the
@@ -56,6 +94,7 @@ function Dashboard() {
   const networks = useNetworks();
   const runs = useRuns();
   const scenarios = useScenarios();
+  const conversions = useConversions();
 
   const stats = useMemo(() => {
     const active = runs.filter((r) => r.status === "running" || r.status === "queued").length;
@@ -129,7 +168,9 @@ function Dashboard() {
   }, [runs, networks]);
 
   const activity = useMemo(() => {
-    const items: { icon: typeof PlayCircle; tone: string; text: string; time: string; user: string }[] = [];
+    type ActivityItem = { icon: typeof PlayCircle; tone: string; text: string; time: string; user: string; sortKey: string };
+    const items: ActivityItem[] = [];
+
     const userForRun = (r: { scenarioId: string; scenarioName: string; createdBy?: string }) => {
       if (r.createdBy) return r.createdBy;
       const scn =
@@ -137,49 +178,60 @@ function Dashboard() {
         scenarios.find((s) => s.name === r.scenarioName);
       return scn?.createdBy ?? "—";
     };
-    runs.slice(0, 6).forEach((r) => {
+
+    // Simulation run events — treat missing timestamps as oldest so they sink to bottom
+    runs.forEach((r) => {
       const user = userForRun(r);
+      const sortKey = r.startedAt === "—" ? "0000-00-00 00:00" : r.startedAt;
       if (r.status === "completed") {
-        items.push({
-          icon: CheckCircle2,
-          tone: "text-success",
-          text: `Run ${r.id} completed — ${r.scenarioName}`,
-          time: r.startedAt,
-          user,
-        });
+        items.push({ icon: CheckCircle2, tone: "text-success", text: `Run ${r.id} completed — ${r.scenarioName}`, time: r.startedAt, user, sortKey });
       } else if (r.status === "running") {
-        items.push({
-          icon: PlayCircle,
-          tone: "text-info",
-          text: `Run ${r.id} started — ${r.scenarioName}`,
-          time: r.startedAt,
-          user,
-        });
+        items.push({ icon: PlayCircle, tone: "text-info", text: `Run ${r.id} started — ${r.scenarioName}`, time: r.startedAt, user, sortKey });
       } else if (r.status === "failed") {
-        items.push({
-          icon: XCircle,
-          tone: "text-destructive",
-          text: `Run ${r.id} failed — ${r.scenarioName}`,
-          time: r.startedAt,
-          user,
-        });
+        items.push({ icon: XCircle, tone: "text-destructive", text: `Run ${r.id} failed — ${r.scenarioName}`, time: r.startedAt, user, sortKey });
       }
     });
+
     // Highlight the most recent run that had violations
     const violatingRun = runs
       .filter((r) => r.status === "completed" && ((r as typeof r & { violations?: number }).violations ?? 0) > 0)
       .at(0);
     if (violatingRun) {
+      const sortKey = violatingRun.startedAt === "—" ? "0000-00-00 00:00" : violatingRun.startedAt;
       items.push({
         icon: AlertTriangle,
         tone: "text-warning-foreground",
         text: `Violations detected on run ${violatingRun.id} (${(violatingRun as typeof violatingRun & { violations?: number }).violations} total)`,
         time: violatingRun.startedAt,
         user: userForRun(violatingRun),
+        sortKey,
       });
     }
-    return items.slice(0, 6);
-  }, [runs, scenarios, networks]);
+
+    // Network conversion / validation events — sourced from the conversions store.
+    conversions.forEach((c) => {
+      const isValidation = c.type === "validation";
+      items.push({
+        icon: isValidation ? CheckCircle2 : Wrench,
+        tone: isValidation ? "text-success" : "text-primary",
+        text: isValidation
+          ? `Network validated — ${c.networkName}`
+          : `Network converted — ${c.networkName}`,
+        time: c.convertedAt,
+        user: c.convertedBy,
+        sortKey: c.convertedAt,
+      });
+    });
+
+    // Sort newest first, deduplicate by text, cap at 6
+    items.sort((a, b) => b.sortKey.localeCompare(a.sortKey));
+    const seen = new Set<string>();
+    return items.filter((a) => {
+      if (seen.has(a.text)) return false;
+      seen.add(a.text);
+      return true;
+    }).slice(0, 6);
+  }, [runs, scenarios, conversions]);
 
   type SummaryCard = {
     label: string;
@@ -196,7 +248,7 @@ function Dashboard() {
   const queuedCount = runs.filter((r) => r.status === "queued").length;
   const summary: SummaryCard[] = [
     { label: "Networks", value: stats.networks, sub: `${networks.filter((n) => n.status === "validated").length} validated`, icon: NetIcon, accent: "neutral", to: "/networks" },
-    { label: "Scenarios", value: stats.scenarios, sub: "ready to run", icon: FlaskConical, accent: "neutral", to: "/runs" },
+    { label: "Scenarios", value: stats.scenarios, sub: "view results", icon: FlaskConical, accent: "neutral", to: "/runs" },
     { label: "Active Runs", value: stats.active, sub: `${runningCount} running · ${queuedCount} queued`, icon: PlayCircle, accent: "info", to: "/runs" },
     
     { label: "Failed Runs", value: stats.failed, sub: stats.failed > 0 ? "needs attention" : "all healthy", icon: XCircle, accent: "destructive", to: "/runs" },
@@ -453,16 +505,12 @@ function Dashboard() {
                     ({systemOverview.networksWithResults} with results)
                   </div>
                 </div>
-                <div className="mt-2 h-1.5 rounded-full bg-muted overflow-hidden">
-                  <div
-                    className="h-full bg-primary"
-                    style={{
-                      width: `${
-                        systemOverview.totalNetworks > 0
-                          ? (systemOverview.networksWithViolations / systemOverview.totalNetworks) * 100
-                          : 0
-                      }%`,
-                    }}
+                <div className="mt-2">
+                  <AnimatedBar
+                    pct={systemOverview.totalNetworks > 0
+                      ? (systemOverview.networksWithViolations / systemOverview.totalNetworks) * 100
+                      : 0}
+                    delay={150}
                   />
                 </div>
               </div>
@@ -560,10 +608,10 @@ function Dashboard() {
             <div className="text-sm font-semibold">Runs by Status</div>
           </div>
           <div className="space-y-3">
-            {(["completed", "running", "queued", "failed"] as const).map((s) => {
+            {(["completed", "running", "queued", "failed"] as const).map((s, i) => {
               const count = runs.filter((r) => r.status === s).length;
               const pct = runs.length > 0 ? (count / runs.length) * 100 : 0;
-              const tone =
+              const barClass =
                 s === "completed" ? "bg-success" :
                 s === "running" ? "bg-info" :
                 s === "failed" ? "bg-destructive" : "bg-muted-foreground/40";
@@ -573,9 +621,7 @@ function Dashboard() {
                     <span className="capitalize text-muted-foreground">{s}</span>
                     <span className="font-mono tabular-nums">{count}</span>
                   </div>
-                  <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-                    <div className={"h-full " + tone} style={{ width: `${pct}%` }} />
-                  </div>
+                  <AnimatedBar pct={pct} barClass={barClass} delay={i * 120} />
                 </div>
               );
             })}

@@ -527,7 +527,7 @@
     "voltage": "66 kV / 22 kV / 0.4 kV",
     "type": "Mixed",
     "status": "converted",
-    "created": "2026-05-09",
+    "created": "2026-05-10",
     "version": "v1.0",
     "buses": 13963,
     "lines": 13254,
@@ -545,7 +545,7 @@
     "voltage": "66 kV / 22 kV / 0.4 kV",
     "type": "Mixed",
     "status": "converted",
-    "created": "2026-05-09",
+    "created": "2026-05-10",
     "version": "v1.0",
     "buses": 7489,
     "lines": 7415,
@@ -558,12 +558,31 @@
     "metrics": null
   },
   {
+    "id": "opendss-1-balanced",
+    "name": "OpenDSS Rural SMR8 – Balanced",
+    "voltage": "66 kV / 22 kV / 0.4 kV",
+    "type": "Mixed",
+    "status": "converted",
+    "created": "2026-05-10",
+    "version": "v1.0",
+    "buses": 11667,
+    "lines": 10949,
+    "transformers": 717,
+    "loads": 0,
+    "plot_url": "/plots/opendss-1-balanced.html",
+    "source": "opendss",
+    "mode": "balanced",
+    "validation_day": null,
+    "metrics": null,
+    "created_by": "Antoine"
+  },
+  {
     "id": "opendss-3-balanced",
     "name": "OpenDSS Urban HPK11 – Balanced",
     "voltage": "66 kV / 22 kV / 0.4 kV",
     "type": "Mixed",
     "status": "converted",
-    "created": "2026-05-09",
+    "created": "2026-05-10",
     "version": "v1.0",
     "buses": 11189,
     "lines": 11143,
@@ -573,6 +592,7 @@
     "source": "opendss",
     "mode": "balanced",
     "validation_day": null,
-    "metrics": null
+    "metrics": null,
+    "created_by": "Antoine"
   }
 ]

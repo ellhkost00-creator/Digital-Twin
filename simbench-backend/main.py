@@ -280,27 +280,22 @@ def _network_stats_from_pp(net_xlsx: Path, net_json: Path, mode: str) -> dict:
         return {}
 
 
-_PLOT_WIDTH = 900  # fixed canvas width for all OpenDSS topology plots
-
-
-def _generate_opendss_plot(network_id: str, net_xlsx: Path, net_json: Path, mode: str) -> tuple[str | None, int]:
+def _generate_opendss_plot(network_id: str, net_xlsx: Path, net_json: Path, mode: str, display_name: str = "") -> tuple[str | None, int]:
     """
-    Generate an interactive Plotly topology plot at its natural size (no stretch-to-fill).
+    Generate an interactive Plotly topology plot matching the SimBench appearance:
+    responsive layout, branded legend, and network name annotation in the top-right.
     Returns (serve_url, height_px). Height is 0 when generation fails.
-    Skips regeneration if the HTML file already exists.
+    Skips regeneration if the HTML + sidecar .height file already exist.
     """
     if not _PLOT_HELPERS_AVAILABLE:
         return None, 0
     plot_filename = f"{network_id}.html"
     plot_path = PLOTS_DIR / plot_filename
-    if plot_path.exists():
-        # Read back the stored height from the file comment so we can return it.
-        # Falls back to a sensible default if not found.
+    height_path = PLOTS_DIR / f"{network_id}.height"
+
+    if plot_path.exists() and height_path.exists():
         try:
-            first_line = plot_path.read_text(encoding="utf-8", errors="ignore")[:200]
-            import re
-            m = re.search(r"data-height=\"(\d+)\"", first_line)
-            stored_h = int(m.group(1)) if m else 600
+            stored_h = int(height_path.read_text(encoding="utf-8").strip())
         except Exception:
             stored_h = 600
         return f"/plots/{plot_filename}", stored_h
@@ -316,18 +311,37 @@ def _generate_opendss_plot(network_id: str, net_xlsx: Path, net_json: Path, mode
         else:
             return None, 0
 
+        # Set network name so simple_plotly can reference it.
+        label = display_name or network_id
+        net.name = label
+
         fig = simple_plotly(net, auto_open=False, showlegend=True, respect_switches=False)
         fig = style_traces(fig)
         plot_height = compute_min_height(fig)
 
-        # Fixed size — no autosize, no resize-to-fill JS.
+        # Layout: match SimBench appearance — responsive, transparent background,
+        # horizontal legend at bottom, network name as title top-right.
         fig.update_layout(
-            autosize=False,
-            width=_PLOT_WIDTH,
-            height=plot_height,
-            margin=dict(l=16, r=16, t=16, b=64),
-            paper_bgcolor=COLORS["bg_plot"],
+            autosize=True,
+            width=None,
+            height=None,
+            # Extra top margin (36 px) to make room for the network name title.
+            margin=dict(l=16, r=16, t=36, b=64),
+            paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor=COLORS["bg_plot"],
+            title=dict(
+                text=label,
+                x=0.98,
+                xanchor="right",
+                y=1.0,
+                yanchor="top",
+                font=dict(
+                    size=11,
+                    color=COLORS["text_muted"],
+                    family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+                ),
+                pad=dict(t=6, r=4),
+            ),
             font=dict(
                 family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
                 color=COLORS["text_muted"], size=12,
@@ -348,27 +362,12 @@ def _generate_opendss_plot(network_id: str, net_xlsx: Path, net_json: Path, mode
             ),
         )
 
-        plot_div = fig.to_html(
-            full_html=False,
-            include_plotlyjs="cdn",
-            config={"displayModeBar": True, "scrollZoom": True,
-                    "modeBarButtonsToRemove": ["lasso2d", "select2d"], "displaylogo": False},
-        )
-
-        html = f"""<!DOCTYPE html>
-<html lang="en" data-height="{plot_height}">
-<head>
-  <meta charset="UTF-8"/>
-  <style>
-    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-    body {{ background: {COLORS["bg_plot"]}; overflow: hidden; }}
-  </style>
-</head>
-<body>{plot_div}</body>
-</html>"""
+        # Use the same responsive HTML shell as SimBench plots (resize JS + branded CSS).
+        html_content = build_plot_html(fig, label, plot_height)
 
         PLOTS_DIR.mkdir(parents=True, exist_ok=True)
-        plot_path.write_text(html, encoding="utf-8")
+        plot_path.write_text(html_content, encoding="utf-8")
+        height_path.write_text(str(plot_height), encoding="utf-8")
         return f"/plots/{plot_filename}", plot_height
     except Exception as exc:
         logger.warning("Plot generation failed for %s: %s", network_id, exc)
@@ -400,7 +399,8 @@ def convert_opendss(request: ConvertOpenDSSRequest, _cu: dict = Depends(get_curr
     if already_converted:
         stats = _network_stats_from_pp(net_xlsx=net_xlsx, net_json=net_json, mode=request.mode)
         network_id = f"opendss-{request.network}-{request.mode}"
-        plot_url, plot_height = _generate_opendss_plot(network_id, net_xlsx, net_json, request.mode)
+        display_name = f"OpenDSS {network_name.replace('_', ' ')} – {request.mode.capitalize()}"
+        plot_url, plot_height = _generate_opendss_plot(network_id, net_xlsx, net_json, request.mode, display_name)
         return {
             "status": "completed",
             "network": request.network,
@@ -432,7 +432,8 @@ def convert_opendss(request: ConvertOpenDSSRequest, _cu: dict = Depends(get_curr
 
     stats = _network_stats_from_pp(net_xlsx=net_xlsx, net_json=net_json, mode=request.mode)
     network_id = f"opendss-{request.network}-{request.mode}"
-    plot_url, plot_height = _generate_opendss_plot(network_id, net_xlsx, net_json, request.mode)
+    display_name = f"OpenDSS {network_name.replace('_', ' ')} – {request.mode.capitalize()}"
+    plot_url, plot_height = _generate_opendss_plot(network_id, net_xlsx, net_json, request.mode, display_name)
 
     return {
         "status": "completed",
@@ -806,6 +807,7 @@ def save_opendss_network(request: SaveOpenDSSRequest, _cu: dict = Depends(get_cu
         "mode":             request.mode,
         "validation_day":   request.validation_day,
         "metrics":          request.metrics,
+        "created_by":       _cu.get("name", ""),
     }
 
     save_network(record)

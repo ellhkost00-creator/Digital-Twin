@@ -18,6 +18,60 @@ import { useRuns, deleteRun, seedRunsFromBackend } from "@/lib/runs-store";
 import { useRole } from "@/hooks/use-role";
 import { Search, RefreshCw, BarChart3, Trash2 } from "lucide-react";
 
+/**
+ * Module-level cache so fake progress survives route navigation.
+ * Key = run id, value = last displayed percentage.
+ * Cleared when a run reaches "completed" or "failed".
+ */
+const fakeProgressCache = new Map<string, number>();
+
+/**
+ * Progress bar that animates while a run is in the "running" state.
+ *
+ * Strategy:
+ *  - "queued"    → shows 0 %
+ *  - "running"   → exponentially approaches 87 %, resuming from the
+ *                  cached value so navigating away and back doesn't reset it
+ *  - "completed" → snaps to 100 % via the shadcn Progress transition
+ *  - "failed"    → shows 0 %
+ */
+function AnimatedProgress({ runId, progress, status }: { runId: string; progress: number; status: string }) {
+  const [displayed, setDisplayed] = useState(() => {
+    if (status === "completed") return 100;
+    if (status === "running") return fakeProgressCache.get(runId) ?? 0;
+    return progress;
+  });
+
+  useEffect(() => {
+    if (status === "completed" || status === "failed") {
+      fakeProgressCache.delete(runId);
+      setDisplayed(status === "completed" ? 100 : 0);
+      return;
+    }
+    if (status !== "running") {
+      setDisplayed(progress);
+      return;
+    }
+    // Resume from cached value so navigation doesn't restart the animation.
+    let current = fakeProgressCache.get(runId) ?? 0;
+    const id = setInterval(() => {
+      current += (87 - current) * 0.04;
+      fakeProgressCache.set(runId, current);
+      setDisplayed(current);
+    }, 250);
+    return () => clearInterval(id);
+  }, [runId, status, progress]);
+
+  return (
+    <div className="flex items-center gap-2">
+      <Progress value={displayed} className="h-1.5" />
+      <span className="text-xs text-muted-foreground tabular-nums w-9 text-right">
+        {Math.min(100, Math.round(displayed))}%
+      </span>
+    </div>
+  );
+}
+
 export const Route = createFileRoute("/runs")({
   validateSearch: (search: Record<string, unknown>): { highlight?: string } => ({
     highlight: typeof search.highlight === "string" ? search.highlight : undefined,
@@ -173,10 +227,7 @@ function SimulationRuns() {
                   <td className="py-3 px-4 text-muted-foreground">{r.networkName}</td>
                   <td className="py-3 px-4"><StatusBadge status={r.status} /></td>
                   <td className="py-3 px-4 w-44">
-                    <div className="flex items-center gap-2">
-                      <Progress value={r.progress} className="h-1.5" />
-                      <span className="text-xs text-muted-foreground tabular-nums w-9 text-right">{r.progress}%</span>
-                    </div>
+                    <AnimatedProgress runId={r.id} progress={r.progress} status={r.status} />
                   </td>
                   <td className="py-3 px-4 text-muted-foreground text-xs">{r.startedAt}</td>
                   <td className="py-3 px-4 font-mono text-xs">{r.duration}</td>

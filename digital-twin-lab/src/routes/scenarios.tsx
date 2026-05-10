@@ -22,7 +22,6 @@ import { useNetworks } from "@/lib/networks-store";
 import {
   runSimulation,
   runOpenDSSSimulation,
-  buildResultUrl,
   type OpenDSSRunResult,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -89,7 +88,6 @@ function ScenarioBuilder() {
   const [day, setDay] = useState("1");
 
   const [submitPhase, setSubmitPhase] = useState<SubmitPhase>("idle");
-  const [lastResultUrls, setLastResultUrls] = useState<Record<string, string>>({});
   const [lastRunId, setLastRunId] = useState<string | null>(null);
 
   // ── OpenDSS-specific state ──────────────────────────────────────────────────
@@ -103,7 +101,6 @@ function ScenarioBuilder() {
   const handleRun = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!networkId) { toast.error("Please select a network"); return; }
-    setLastResultUrls({});
     setLastRunId(null);
 
     const tempRunId = `run-pending-${Date.now()}`;
@@ -149,11 +146,6 @@ function ScenarioBuilder() {
 
         if (!runId) throw new Error("Backend did not return a run_id");
 
-        setLastResultUrls({
-          vm_pu: buildResultUrl(_networkId, runId, "vm-pu"),
-          line_loading: buildResultUrl(_networkId, runId, "line-loading"),
-          trafo_loading: buildResultUrl(_networkId, runId, "trafo-loading"),
-        });
         setLastRunId(runId);
 
         toast.success(`Simulation completed — run ${runId}`);
@@ -648,66 +640,6 @@ function ScenarioBuilder() {
               )}
             </dl>
           </Card>
-
-          {/* OpenDSS: latest run results (mirrors SimBench "Latest results") */}
-          {isOpenDSSNetwork && opendssRunState.phase === "done" && (
-            <Card className="p-5 space-y-3">
-              <div className="flex items-center gap-2 text-sm text-green-600">
-                <CheckCircle2 className="h-4 w-4 shrink-0" />
-                <span className="font-semibold">
-                  Completed in {opendssRunState.result.duration_seconds}s
-                </span>
-              </div>
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                {([
-                  ["Under V", opendssRunState.result.violations.under_voltage],
-                  ["Over V",  opendssRunState.result.violations.over_voltage],
-                  ["Line",    opendssRunState.result.violations.line_overload],
-                  ["Trafo",   opendssRunState.result.violations.trafo_overload],
-                ] as [string, number][]).map(([label, val]) => (
-                  <div
-                    key={label}
-                    className={cn(
-                      "rounded-lg border px-3 py-2 flex items-center justify-between",
-                      val > 0 ? "border-destructive/40 bg-destructive/5" : "border-border bg-muted/20",
-                    )}
-                  >
-                    <span className="text-muted-foreground">{label}</span>
-                    <span className={cn("font-semibold", val > 0 && "text-destructive")}>{val}</span>
-                  </div>
-                ))}
-              </div>
-              <Button asChild variant="outline" size="sm" className="w-full gap-2">
-                <Link to="/results" search={{ runId: opendssRunState.result.run_id, networkId }}>
-                  <BarChart3 className="h-4 w-4" /> View Results
-                </Link>
-              </Button>
-            </Card>
-          )}
-
-          {/* SimBench: latest result CSV links */}
-          {!isOpenDSSNetwork && Object.keys(lastResultUrls).length > 0 && (
-            <Card className="p-5">
-              <div className="text-sm font-semibold mb-3">Latest results</div>
-              <ul className="space-y-2 text-sm">
-                {(["vm_pu", "line_loading", "trafo_loading"] as const).map((k) =>
-                  lastResultUrls[k] ? (
-                    <li key={k} className="flex items-center justify-between gap-2">
-                      <span className="text-muted-foreground">{k}</span>
-                      <a
-                        href={lastResultUrls[k]}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-primary underline truncate max-w-[60%]"
-                      >
-                        Open
-                      </a>
-                    </li>
-                  ) : null,
-                )}
-              </ul>
-            </Card>
-          )}
 
           {/* Recent scenarios (always shown) */}
           <Card className="p-5">
