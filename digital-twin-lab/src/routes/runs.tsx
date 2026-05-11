@@ -235,7 +235,10 @@ function SimulationRuns() {
                     {r.violations > 0 ? (
                       <Link
                         to="/results"
-                        search={{ runId: r.id }}
+                        search={{
+                          runId: r.id,
+                          networkId: (r as typeof r & { networkId?: string }).networkId,
+                        }}
                         className="text-primary hover:underline"
                       >
                         {r.violations}
@@ -248,7 +251,13 @@ function SimulationRuns() {
                     <div className="flex items-center justify-center gap-1">
                       {r.status === "completed" && (
                         <Button asChild variant="ghost" size="sm">
-                          <Link to="/results" search={{ runId: r.id }}>
+                          <Link
+                            to="/results"
+                            search={{
+                              runId: r.id,
+                              networkId: (r as typeof r & { networkId?: string }).networkId,
+                            }}
+                          >
                             <BarChart3 className="h-4 w-4 mr-1" /> Results
                           </Link>
                         </Button>

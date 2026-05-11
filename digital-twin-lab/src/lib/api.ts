@@ -180,6 +180,52 @@ export async function runSimulation(params: RunSimulationParams) {
   return response.json();
 }
 
+export interface PowerFlowViolations {
+  under_voltage: number;
+  over_voltage: number;
+  line_overload: number;
+  trafo_overload: number;
+  total: number;
+}
+
+export interface PowerFlowResult {
+  run_id: string;
+  network_id: string;
+  started_at: string;
+  duration_seconds: number;
+  violations: PowerFlowViolations;
+  plot_url: string; // relative path: "/networks/{id}/results/{run_id}/pf-plot"
+}
+
+export async function runPowerFlow(
+  networkId: string,
+  date: string,  // YYYY-MM-DD
+  time: string,  // HH:MM
+): Promise<PowerFlowResult> {
+  const res = await apiFetch(`${API_BASE}/networks/${networkId}/run-powerflow`, {
+    method: "POST",
+    body: JSON.stringify({ date, time }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(
+      (err as { detail?: string }).detail || `Power flow failed (${res.status})`,
+    );
+  }
+  return res.json();
+}
+
+export async function fetchPfViolations(
+  networkId: string,
+  runId: string,
+): Promise<PowerFlowViolations> {
+  const res = await apiFetch(
+    `${API_BASE}/networks/${networkId}/results/${runId}/pf-violations`,
+  );
+  if (!res.ok) throw new Error(`Failed to fetch violations (${res.status})`);
+  return res.json();
+}
+
 export type ResultKind = "vm-pu" | "line-loading" | "trafo-loading";
 
 export function buildResultUrl(networkId: string, runId: string, kind: ResultKind) {

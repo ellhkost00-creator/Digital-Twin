@@ -91,6 +91,40 @@ V_LOWER = 0.94
 V_UPPER = 1.06
 LOAD_LIMIT = 100.0
 
+# ── SimBench in-process cache ─────────────────────────────────────────────────
+# sb.get_simbench_net() + sb.get_absolute_values() each take 35-50 s on first
+# call (CSV parsing).  Cache both by network_id so repeated power-flow or
+# time-series requests on the same network skip the expensive setup entirely.
+# The cache is process-scoped and survives across requests; it is intentionally
+# never evicted (networks don't change at runtime).
+_sb_net_cache: dict[str, object] = {}          # network_id → pandapower net
+_sb_profiles_cache: dict[str, dict] = {}       # network_id → profiles dict
+
+
+def _get_simbench_net_cached(network_id: str):
+    """Return a deep-copied pandapower net for the given SimBench network_id.
+    The canonical copy is loaded once and cached; callers receive a copy so
+    they can mutate element DataFrames (apply profiles) without poisoning the cache.
+    """
+    import copy
+    import simbench as sb
+    if network_id not in _sb_net_cache:
+        _sb_net_cache[network_id] = sb.get_simbench_net(network_id)
+    return copy.deepcopy(_sb_net_cache[network_id])
+
+
+def _get_simbench_profiles_cached(network_id: str, net) -> dict:
+    """Return the absolute-value profiles dict for the given network_id.
+    Profiles are read-only (we only ever do .loc[] lookups), so we return the
+    same object without copying.
+    """
+    import simbench as sb
+    if network_id not in _sb_profiles_cache:
+        _sb_profiles_cache[network_id] = sb.get_absolute_values(
+            net, profiles_instead_of_study_cases=True
+        )
+    return _sb_profiles_cache[network_id]
+
 if PLOTS_DIR.exists():
     app.mount("/plots", StaticFiles(directory=PLOTS_DIR), name="plots")
 
@@ -124,6 +158,11 @@ class SaveOpenDSSRequest(BaseModel):
 
 class OpenDSSRunRequest(BaseModel):
     day: int  # 1–365 day of year
+
+
+class PowerFlowRequest(BaseModel):
+    date: str   # YYYY-MM-DD
+    time: str   # HH:MM (15-min snap for SimBench; nominal for OpenDSS)
 
 
 class CreateScenarioRequest(BaseModel):
@@ -932,6 +971,189 @@ def run_opendss_simulation(network_id: str, request: OpenDSSRunRequest, _cu: dic
     }
 
 
+def _compute_pf_violations(net) -> dict:
+    """Count threshold breaches in a single-timestep pandapower power-flow result."""
+    under_v  = int((net.res_bus["vm_pu"] < V_LOWER).sum())
+    over_v   = int((net.res_bus["vm_pu"] > V_UPPER).sum())
+    line_ol  = int((net.res_line["loading_percent"] > LOAD_LIMIT).sum()) if not net.res_line.empty else 0
+    trafo_ol = int((net.res_trafo["loading_percent"] > LOAD_LIMIT).sum()) if not net.res_trafo.empty else 0
+    return {
+        "under_voltage":  under_v,
+        "over_voltage":   over_v,
+        "line_overload":  line_ol,
+        "trafo_overload": trafo_ol,
+        "total": under_v + over_v + line_ol + trafo_ol,
+    }
+
+
+@app.post("/networks/{network_id}/run-powerflow")
+def run_power_flow(
+    network_id: str,
+    request: PowerFlowRequest,
+    _cu: dict = Depends(get_current_user),
+):
+    """
+    Run a single-timestep balanced power flow on a SimBench or OpenDSS network.
+    For SimBench networks the simbench profile is applied at the requested
+    date+time (15-min resolution).  For OpenDSS networks the existing pandapower
+    model is used at its current (nominal) loading.
+    Saves pf_violations.json (always) and pf_plot.html (when plot helpers are
+    available) to the results directory, then persists the run in the DB.
+    """
+    import logging as _log
+    _logger = _log.getLogger(__name__)
+
+    run_id     = f"pf_{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    out_dir    = RESULTS_DIR / network_id / run_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    start_time = datetime.now()
+
+    # Initialise so they are always defined when save_run() is called
+    net: object | None = None
+    v: dict = {"under_voltage": 0, "over_voltage": 0, "line_overload": 0, "trafo_overload": 0, "total": 0}
+    plot_url: str | None = None
+
+    # ── 1. Load network + run power flow ─────────────────────────────────────
+    try:
+        import pandapower as pp
+
+        if network_id.startswith("opendss-"):
+            parts = network_id.split("-")
+            if len(parts) != 3 or parts[1] not in NANDO_NETWORK_NAMES:
+                raise HTTPException(status_code=400, detail=f"Invalid OpenDSS network id: {network_id}")
+            network_num  = parts[1]
+            mode         = parts[2]
+            network_name = NANDO_NETWORK_NAMES[network_num]
+            net_dir  = NANDO_ROOT / "dss_files" / f"net_{network_num}_{network_name}"
+            net_xlsx = net_dir / "net_pp.xlsx"
+            net_json = net_dir / "net_pp_3ph_ready.json"
+            if mode == "unbalanced" and net_json.exists():
+                net = pp.from_json(str(net_json))
+            elif net_xlsx.exists():
+                net = pp.from_excel(str(net_xlsx))
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Converted network not found. Run the conversion pipeline first.",
+                )
+        else:
+            # SimBench — apply profiles at the requested date+time timestep.
+            # Both network loading and profile parsing are cached in-process so
+            # repeated calls on the same network skip the 40-50 s CSV setup.
+            try:
+                net = _get_simbench_net_cached(network_id)
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=f"Cannot load SimBench network: {exc}")
+
+            profiles = _get_simbench_profiles_cached(network_id, net)
+            dt_req   = datetime.strptime(f"{request.date} {request.time}", "%Y-%m-%d %H:%M")
+            ts_idx   = (dt_req.timetuple().tm_yday - 1) * 96 + dt_req.hour * 4 + dt_req.minute // 15
+
+            # get_absolute_values() returns {(element_type, param): DataFrame}
+            # Each DataFrame has timesteps as rows and element indices as columns.
+            applied = 0
+            for (element_type, param), profile_df in profiles.items():
+                if (
+                    isinstance(element_type, str)
+                    and hasattr(net, element_type)
+                    and not net[element_type].empty
+                    and ts_idx in profile_df.index
+                ):
+                    row = profile_df.loc[ts_idx]  # Series: index = element indices
+                    for el_idx, value in row.items():
+                        if el_idx in net[element_type].index:
+                            net[element_type].at[el_idx, param] = value
+                            applied += 1
+            _logger.info(
+                "Profile application: ts_idx=%d, %d values written to network elements",
+                ts_idx, applied,
+            )
+
+        # Always run balanced power flow — pf_res_plotly requires balanced results
+        pp.runpp(net, numba=False)
+        v = _compute_pf_violations(net)
+
+        import json as _json
+        (out_dir / "pf_violations.json").write_text(_json.dumps(v), encoding="utf-8")
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _logger.exception("Power flow solve failed for network %s run %s", network_id, run_id)
+        raise HTTPException(status_code=500, detail=f"Power flow failed: {exc}")
+
+    # ── 2. Generate interactive plot (optional — failures do not abort the run) ─
+    if _PLOT_HELPERS_AVAILABLE and net is not None:
+        try:
+            from pandapower.plotting.plotly import pf_res_plotly
+            fig         = pf_res_plotly(net, auto_open=False)
+            # Shrink all scatter (bus) markers
+            if network_id.startswith("opendss-"):
+                for trace in fig.data:
+                    if trace.type == "scatter" and hasattr(trace, "marker") and trace.marker:
+                        trace.marker.size = 5
+                    if trace.type == "scatter" and hasattr(trace, "line") and trace.line:
+                        trace.line.width = 1  # default is ~2, try 1–1.5
+            plot_height = compute_min_height(fig)
+            html        = build_plot_html(fig, run_id, plot_height)
+            (out_dir / "pf_plot.html").write_text(html, encoding="utf-8")
+            plot_url = f"/networks/{network_id}/results/{run_id}/pf-plot"
+        except Exception:
+            _logger.exception("pf_res_plotly failed for run %s — run saved without plot", run_id)
+
+    # ── 3. Persist the run record ─────────────────────────────────────────────
+    duration   = (datetime.now() - start_time).total_seconds()
+    dt_parts   = request.date.split("-")
+    pf_year, pf_month, pf_day = int(dt_parts[0]), int(dt_parts[1]), int(dt_parts[2])
+
+    save_run(
+        run_id=run_id,
+        network_id=network_id,
+        horizon="power_flow",          # sentinel — no timeseries window
+        year=pf_year,
+        month=pf_month,
+        day=pf_day,
+        mode="balanced",
+        has_trafo=(net is not None and hasattr(net, "res_trafo") and not net.res_trafo.empty),
+        started_at=start_time,
+        duration_seconds=duration,
+        violations_under_voltage=v["under_voltage"],
+        violations_over_voltage=v["over_voltage"],
+        violations_line_overload=v["line_overload"],
+        violations_trafo_overload=v["trafo_overload"],
+        violations_total=v["total"],
+        created_by=_cu.get("name"),
+    )
+
+    return {
+        "run_id":           run_id,
+        "network_id":       network_id,
+        "started_at":       start_time.isoformat(),
+        "duration_seconds": round(duration, 2),
+        "violations":       v,
+        "plot_url":         plot_url,
+    }
+
+
+@app.get("/networks/{network_id}/results/{run_id}/pf-plot")
+def get_pf_plot(network_id: str, run_id: str, _cu: dict = Depends(get_current_user)):
+    """Serve the pf_res_plotly HTML for a power-flow run."""
+    plot_path = RESULTS_DIR / network_id / run_id / "pf_plot.html"
+    if not plot_path.exists():
+        raise HTTPException(status_code=404, detail="Power flow plot not found")
+    return FileResponse(str(plot_path), media_type="text/html")
+
+
+@app.get("/networks/{network_id}/results/{run_id}/pf-violations")
+def get_pf_violations(network_id: str, run_id: str, _cu: dict = Depends(get_current_user)):
+    """Return the violation counts (4 categories + total) for a power-flow run."""
+    viol_path = RESULTS_DIR / network_id / run_id / "pf_violations.json"
+    if not viol_path.exists():
+        raise HTTPException(status_code=404, detail="Violations data not found")
+    import json as _json
+    return _json.loads(viol_path.read_text(encoding="utf-8"))
+
+
 # ── Auth endpoints (public — no Depends(get_current_user)) ───────────────────
 
 @app.post("/auth/login")
@@ -1241,12 +1463,9 @@ def run_simulation(network_id: str, request: RunRequest, _cu: dict = Depends(get
         raise HTTPException(status_code=400, detail="Only balanced mode is supported for SimBench networks")
 
     try:
-        net = sb.get_simbench_net(network_id)
+        net = _get_simbench_net_cached(network_id)
 
-        profiles = sb.get_absolute_values(
-            net,
-            profiles_instead_of_study_cases=True
-        )
+        profiles = _get_simbench_profiles_cached(network_id, net)
 
         sb.apply_const_controllers(net, profiles)
 

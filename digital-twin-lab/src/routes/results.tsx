@@ -15,7 +15,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { getAllScenarios } from "@/lib/scenarios-store";
 import { useNetworks } from "@/lib/networks-store";
 import { useRuns } from "@/lib/runs-store";
-import { API_BASE, fetchResultEnvelope, fetchResultColumn, fetchResultPhases, fetchResultPhasesColumn, type EnvelopeResult, type PhasesResult } from "@/lib/api";
+import { API_BASE, apiFetch, fetchResultEnvelope, fetchResultColumn, fetchResultPhases, fetchResultPhasesColumn, fetchPfViolations, type EnvelopeResult, type PhasesResult, type PowerFlowViolations } from "@/lib/api";
 import {
   ResponsiveContainer,
   LineChart,
@@ -39,6 +39,8 @@ import {
   Microscope,
   Check,
   ChevronsUpDown,
+  AlertTriangle,
+  CheckCircle2,
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
@@ -127,18 +129,21 @@ function Results() {
   // buildRunContext parses the runId string (e.g. "2016-01-01_week") to
   // extract horizon/year/month/day — no sessionStorage dependency needed.
   // After a restart, the run may carry its own networkId from localStorage.
+  const resolvedNetworkId =
+    networkId ||
+    (selectedRun as (typeof selectedRun) & { networkId?: string })?.networkId ||
+    "";
+
+  const isPowerFlowRun = runId.startsWith("pf_");
+
   const runContext = useMemo<StoredSimulationResult | null>(() => {
-    const resolvedNetworkId =
-      networkId ||
-      (selectedRun as (typeof selectedRun) & { networkId?: string })?.networkId ||
-      "";
-    if (!resolvedNetworkId || !runId) return null;
+    if (!resolvedNetworkId || !runId || isPowerFlowRun) return null;
     return buildRunContext(
       resolvedNetworkId,
       runId,
       selectedNetwork?.name,
     );
-  }, [networkId, runId, selectedNetwork?.name, selectedRun]);
+  }, [resolvedNetworkId, runId, selectedNetwork?.name, isPowerFlowRun]);
 
   const loadResults = () => {
     if (!networkId || !runId) return;
@@ -345,44 +350,214 @@ function Results() {
 
       {state === "ready" && (
         <>
-          {/* Topology overview + Current Results View side by side */}
-          <div className="grid gap-3 lg:grid-cols-[2fr_1fr] mb-6">
-            <NetworkTopology
-              networkName={selectedNetwork?.name ?? "Network"}
-              networkId={selectedNetwork?.id ?? null}
-            />
-            <CurrentResultsView ctx={runContext} fallbackNetworkName={selectedNetwork?.name} fallbackRunId={runId} />
-          </div>
-
-          {runContext ? (
-            <RealKpiCards ctx={runContext} />
+          {isPowerFlowRun ? (
+            /* Power flow: plot fills the topology slot; summary + violations stack in the right column */
+            <div className="grid gap-3 lg:grid-cols-[2fr_1fr] mb-6">
+              <PowerFlowPlotCard networkId={resolvedNetworkId} runId={runId} />
+              <div className="flex flex-col gap-3">
+                <PowerFlowSummaryCard runId={runId} selectedRun={selectedRun} />
+                <PowerFlowViolationsCard networkId={resolvedNetworkId} runId={runId} />
+              </div>
+            </div>
           ) : (
-            <EmptyDataCard
-              title="No KPI data"
-              hint="Run a simulation from the Scenario Builder to compute voltage and loading KPIs."
-            />
-          )}
+            <>
+              {/* Topology overview + Results View side by side */}
+              <div className="grid gap-3 lg:grid-cols-[2fr_1fr] mb-6">
+                <NetworkTopology
+                  networkName={selectedNetwork?.name ?? "Network"}
+                  networkId={selectedNetwork?.id ?? null}
+                />
+                <CurrentResultsView ctx={runContext} fallbackNetworkName={selectedNetwork?.name} fallbackRunId={runId} />
+              </div>
 
-          {runContext ? (
-            <RealResultsTabs ctx={runContext} />
-          ) : (
-            <Card className="p-6 text-sm text-muted-foreground border-dashed">
-              No backend simulation result available in this session. Run a
-              simulation from the Scenario Builder to see real time-series
-              charts here.
-            </Card>
-          )}
+              {runContext ? (
+                <RealKpiCards ctx={runContext} />
+              ) : (
+                <EmptyDataCard
+                  title="No KPI data"
+                  hint="Run a simulation from the Scenario Builder to compute voltage and loading KPIs."
+                />
+              )}
 
-          <ViolationDetectionSection
-            runId={runContext?.runId ?? runId}
-            networkName={runContext?.networkName ?? selectedNetwork?.name}
-            runContext={runContext ?? undefined}
-            autoRun
-          />
+              {runContext ? (
+                <RealResultsTabs ctx={runContext} />
+              ) : (
+                <Card className="p-6 text-sm text-muted-foreground border-dashed">
+                  No backend simulation result available in this session. Run a
+                  simulation from the Scenario Builder to see real time-series
+                  charts here.
+                </Card>
+              )}
+
+              <ViolationDetectionSection
+                runId={runContext?.runId ?? runId}
+                networkName={runContext?.networkName ?? selectedNetwork?.name}
+                runContext={runContext ?? undefined}
+                autoRun
+              />
+            </>
+          )}
         </>
-
       )}
     </AppShell>
+  );
+}
+
+// ── Power-flow specific components ──────────────────────────────────────────
+
+/** Small summary card shown in the top-right slot for power-flow runs. */
+function PowerFlowSummaryCard({
+  runId,
+  selectedRun,
+}: {
+  runId: string;
+  selectedRun: ReturnType<typeof useRuns>[number] | undefined;
+}) {
+  const violations = (selectedRun as (typeof selectedRun) & { violations?: number })?.violations ?? null;
+  return (
+    <Card className="p-5 h-full">
+      <div className="text-sm font-semibold mb-3">Power Flow Run</div>
+      <dl className="space-y-2 text-sm">
+        <div className="flex items-center justify-between gap-2">
+          <dt className="text-muted-foreground">Run ID</dt>
+          <dd className="font-mono text-xs truncate">{runId}</dd>
+        </div>
+        {selectedRun?.startedAt && (
+          <div className="flex items-center justify-between gap-2">
+            <dt className="text-muted-foreground">Started</dt>
+            <dd className="font-medium">{selectedRun.startedAt}</dd>
+          </div>
+        )}
+        {selectedRun?.duration && (
+          <div className="flex items-center justify-between gap-2">
+            <dt className="text-muted-foreground">Duration</dt>
+            <dd className="font-medium">{selectedRun.duration}</dd>
+          </div>
+        )}
+        {violations !== null && (
+          <div className="flex items-center justify-between gap-2">
+            <dt className="text-muted-foreground">Violations</dt>
+            <dd className={violations > 0 ? "font-semibold text-destructive" : "font-medium text-emerald-600"}>
+              {violations > 0 ? violations : "None"}
+            </dd>
+          </div>
+        )}
+      </dl>
+    </Card>
+  );
+}
+
+/** pf_res_plotly interactive plot — occupies the topology slot on the left. */
+function PowerFlowPlotCard({ networkId, runId }: { networkId: string; runId: string }) {
+  const [pfHtml, setPfHtml] = useState<string | null>(null);
+  const [plotLoading, setPlotLoading] = useState(true);
+  const [plotError, setPlotError] = useState<string | null>(null);
+
+  // Fetch HTML with the Bearer token and inject via srcDoc —
+  // iframes cannot send Authorization headers directly.
+  useEffect(() => {
+    if (!networkId || !runId) return;
+    setPlotLoading(true);
+    setPlotError(null);
+    apiFetch(`${API_BASE}/networks/${networkId}/results/${runId}/pf-plot`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`Server returned ${res.status}`);
+        return res.text();
+      })
+      .then((html) => { setPfHtml(html); setPlotLoading(false); })
+      .catch((err) => {
+        setPlotError(err instanceof Error ? err.message : "Failed to load plot");
+        setPlotLoading(false);
+      });
+  }, [networkId, runId]);
+
+  return (
+    <Card className="p-0 overflow-hidden flex flex-col">
+      <div className="px-5 pt-4 pb-2 text-sm font-semibold border-b border-border/60 flex items-center gap-2 shrink-0">
+        <BarChart3 className="h-4 w-4 text-primary" />
+        Power Flow Plot
+      </div>
+      <div className="relative flex-1 min-h-[750px]">
+        {plotLoading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-muted/20">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        )}
+        {plotError && !plotLoading && (
+          <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">
+            {plotError}
+          </div>
+        )}
+        {pfHtml && (
+          <iframe
+            key={runId}
+            srcDoc={pfHtml}
+            title="Power flow result"
+            className="w-full h-full border-0 block"
+            sandbox="allow-scripts"
+          />
+        )}
+      </div>
+    </Card>
+  );
+}
+
+/** Violations breakdown card — stacks below the summary in the right column. */
+function PowerFlowViolationsCard({ networkId, runId }: { networkId: string; runId: string }) {
+  const [violations, setViolations] = useState<PowerFlowViolations | null>(null);
+  const [violError, setViolError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!networkId || !runId) return;
+    fetchPfViolations(networkId, runId)
+      .then(setViolations)
+      .catch(() => setViolError("Could not load violation data."));
+  }, [networkId, runId]);
+
+  const ViolRow = ({ label, count }: { label: string; count: number }) => (
+    <div className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
+      <span className="text-sm text-muted-foreground">{label}</span>
+      <span className={cn("text-sm font-semibold", count > 0 ? "text-destructive" : "text-emerald-600")}>
+        {count}
+      </span>
+    </div>
+  );
+
+  return (
+    <Card className="p-5">
+      <div className="flex items-center gap-2 mb-4">
+        {violations && violations.total === 0 ? (
+          <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+        ) : (
+          <AlertTriangle className="h-4 w-4 text-destructive" />
+        )}
+        <div className="text-sm font-semibold">Violation Detection</div>
+        {violations && (
+          <span className={cn(
+            "ml-auto text-xs font-medium px-2 py-0.5 rounded-full",
+            violations.total === 0
+              ? "bg-emerald-500/10 text-emerald-600"
+              : "bg-destructive/10 text-destructive",
+          )}>
+            {violations.total === 0 ? "No violations" : `${violations.total} violation${violations.total !== 1 ? "s" : ""}`}
+          </span>
+        )}
+      </div>
+      {violError ? (
+        <p className="text-xs text-muted-foreground">{violError}</p>
+      ) : violations ? (
+        <div>
+          <ViolRow label="Under-voltage buses (< 0.94 pu)"   count={violations.under_voltage} />
+          <ViolRow label="Over-voltage buses (> 1.06 pu)"    count={violations.over_voltage} />
+          <ViolRow label="Overloaded lines (> 100%)"          count={violations.line_overload} />
+          <ViolRow label="Overloaded transformers (> 100%)"   count={violations.trafo_overload} />
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" /> Loading violation data…
+        </div>
+      )}
+    </Card>
   );
 }
 

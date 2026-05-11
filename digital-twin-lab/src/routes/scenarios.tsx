@@ -22,7 +22,9 @@ import { useNetworks } from "@/lib/networks-store";
 import {
   runSimulation,
   runOpenDSSSimulation,
+  runPowerFlow,
   type OpenDSSRunResult,
+  API_BASE,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -52,6 +54,7 @@ const MONTHS = [
 
 type Mode = "balanced" | "unbalanced";
 type Horizon = "day" | "week" | "month";
+type SimType = "time_series" | "power_flow";
 
 type SubmitPhase = "idle" | "queued" | "running";
 
@@ -89,6 +92,10 @@ function ScenarioBuilder() {
 
   const [submitPhase, setSubmitPhase] = useState<SubmitPhase>("idle");
   const [lastRunId, setLastRunId] = useState<string | null>(null);
+
+  // ── Simulation type toggle ──────────────────────────────────────────────────
+  const [simType, setSimType] = useState<SimType>("time_series");
+  const [pfTime, setPfTime]   = useState("12:00"); // combined HH:MM for power flow
 
   // ── OpenDSS-specific state ──────────────────────────────────────────────────
   const [opendssRunState, setOpendssRunState] = useState<OpenDSSRunState>({ phase: "idle" });
@@ -261,11 +268,71 @@ function ScenarioBuilder() {
     }
   };
 
-  const isRunning = isOpenDSSNetwork
+  // ── Power-flow handler (SimBench + OpenDSS) ────────────────────────────────
+  const handlePowerFlowRun = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!networkId) { toast.error("Please select a network"); return; }
+
+    const _networkId = networkId;
+    const _networks  = networks;
+    const dateStr    = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const _pfTime    = pfTime;
+    const tempRunId  = `run-pending-${Date.now()}`;
+    const createdBy  = getCurrentUserInfo()?.name ?? "unknown";
+
+    const initialStatus = enqueue(async () => {
+      updateRun(tempRunId, { status: "running" });
+      setSubmitPhase("running");
+      try {
+        const result = await runPowerFlow(_networkId, dateStr, _pfTime);
+        setLastRunId(result.run_id);
+        removeRun(tempRunId);
+        createRun({
+          scenarioId: "",
+          scenarioName: `Power flow · ${dateStr} ${_pfTime}`,
+          networkName: _networks.find((n) => n.id === _networkId)?.name,
+          runId: result.run_id,
+          networkId: _networkId,
+          startedAtIso: result.started_at,
+          durationSeconds: result.duration_seconds,
+          violations: result.violations.total,
+          createdBy,
+        });
+        toast.success(`Power flow completed — run ${result.run_id}`);
+      } catch (err) {
+        updateRun(tempRunId, { status: "failed" });
+        toast.error(err instanceof Error ? err.message : "Power flow failed");
+      } finally {
+        setSubmitPhase("idle");
+      }
+    });
+
+    // Create a visible placeholder entry immediately (same pattern as handleRun)
+    createRun({
+      scenarioId: "",
+      scenarioName: `Power flow · ${dateStr} ${_pfTime}`,
+      networkName: networks.find((n) => n.id === networkId)?.name,
+      runId: tempRunId,
+      networkId,
+      status: initialStatus,
+      createdBy,
+    });
+
+    setSubmitPhase(initialStatus);
+    if (initialStatus === "queued") {
+      toast.info("Power flow queued — will start when the current run finishes.");
+    }
+  };
+
+  const isRunning = simType === "power_flow"
+    ? submitPhase === "running"
+    : isOpenDSSNetwork
     ? opendssRunState.phase === "running"
     : submitPhase === "running";
 
-  const isQueued = isOpenDSSNetwork
+  const isQueued = simType === "power_flow"
+    ? submitPhase === "queued"
+    : isOpenDSSNetwork
     ? opendssRunState.phase === "queued"
     : submitPhase === "queued";
 
@@ -278,7 +345,13 @@ function ScenarioBuilder() {
 
       <div className="grid gap-6 lg:grid-cols-3">
         <form
-          onSubmit={isOpenDSSNetwork ? handleOpenDSSRun : handleRun}
+          onSubmit={
+            simType === "power_flow"
+              ? handlePowerFlowRun
+              : isOpenDSSNetwork
+              ? handleOpenDSSRun
+              : handleRun
+          }
           className="lg:col-span-2 space-y-6"
         >
           {/* ── General card (always shown) ──────────────────────────── */}
@@ -324,13 +397,35 @@ function ScenarioBuilder() {
                   <div className="text-sm font-semibold">Simulation</div>
                 </div>
                 <div className="grid gap-6 sm:grid-cols-2">
-                  {/* Simulation type (fixed) */}
+                  {/* Simulation type toggle */}
                   <div className="space-y-2">
                     <Label>Simulation type</Label>
-                    <div className="rounded-md border border-primary bg-primary/5 p-3">
-                      <div className="font-medium text-sm">Time-series</div>
-                      <div className="text-xs text-muted-foreground">Single-day profile driven sweep</div>
-                    </div>
+                    <RadioGroup
+                      value={simType}
+                      onValueChange={(v) => setSimType(v as SimType)}
+                      className="grid gap-2"
+                    >
+                      {([
+                        { value: "time_series", label: "Time-series",  desc: "Single-day profile driven sweep" },
+                        { value: "power_flow",  label: "Power flow",   desc: "Single-timestep snapshot" },
+                      ] as const).map((opt) => (
+                        <Label
+                          key={opt.value}
+                          className={
+                            "flex items-start gap-3 rounded-md border p-3 cursor-pointer transition-colors " +
+                            (simType === opt.value
+                              ? "border-primary bg-primary/5"
+                              : "border-border hover:bg-muted/40")
+                          }
+                        >
+                          <RadioGroupItem value={opt.value} className="hidden" />
+                          <div>
+                            <div className="font-medium text-sm">{opt.label}</div>
+                            <div className="text-xs text-muted-foreground">{opt.desc}</div>
+                          </div>
+                        </Label>
+                      ))}
+                    </RadioGroup>
                   </div>
 
                   {/* Mode (locked — determined by network) */}
@@ -351,88 +446,97 @@ function ScenarioBuilder() {
                 </div>
               </Card>
 
-              {/* Simulation horizon card */}
-              <Card className="p-6">
-                <div className="flex items-center gap-2 mb-1">
-                  <CalendarClock className="h-4 w-4 text-primary" />
-                  <div className="text-sm font-semibold">Simulation horizon</div>
-                </div>
-                <p className="text-xs text-muted-foreground mb-4">
-                  Simulation of a full day in 48 half-hour steps.
-                </p>
+              {simType === "time_series" ? (
+                /* Simulation horizon card */
+                <Card className="p-6">
+                  <div className="flex items-center gap-2 mb-1">
+                    <CalendarClock className="h-4 w-4 text-primary" />
+                    <div className="text-sm font-semibold">Simulation horizon</div>
+                  </div>
+                  <p className="text-xs text-muted-foreground mb-4">
+                    Simulation of a full day in 48 half-hour steps.
+                  </p>
 
-                {/* Horizon selector — Day locked, Week/Month unavailable */}
-                <div className="grid gap-2 sm:grid-cols-3 mb-6">
-                  {([
-                    { value: "day",   label: "Day",   desc: "48-step · 30 min" },
-                    { value: "week",  label: "Week",  desc: "Not available" },
-                    { value: "month", label: "Month", desc: "Not available" },
-                  ] as const).map((opt) => (
-                    <div
-                      key={opt.value}
-                      className={cn(
-                        "flex items-start gap-3 rounded-md border p-3 transition-colors",
-                        opt.value === "day"
-                          ? "border-primary bg-primary/5"
-                          : "border-border opacity-40",
-                      )}
-                    >
-                      <div>
-                        <div className="font-medium text-sm">{opt.label}</div>
-                        <div className="text-xs text-muted-foreground">{opt.desc}</div>
+                  {/* Horizon selector — Day locked, Week/Month unavailable */}
+                  <div className="grid gap-2 sm:grid-cols-3 mb-6">
+                    {([
+                      { value: "day",   label: "Day",   desc: "48-step · 30 min" },
+                      { value: "week",  label: "Week",  desc: "Not available" },
+                      { value: "month", label: "Month", desc: "Not available" },
+                    ] as const).map((opt) => (
+                      <div
+                        key={opt.value}
+                        className={cn(
+                          "flex items-start gap-3 rounded-md border p-3 transition-colors",
+                          opt.value === "day"
+                            ? "border-primary bg-primary/5"
+                            : "border-border opacity-40",
+                        )}
+                      >
+                        <div>
+                          <div className="font-medium text-sm">{opt.label}</div>
+                          <div className="text-xs text-muted-foreground">{opt.desc}</div>
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
 
-                <div className="grid gap-4 sm:grid-cols-3">
-                  <div className="space-y-2">
-                    <Label htmlFor="opendss-year">Year</Label>
-                    <Input
-                      id="opendss-year"
-                      type="number"
-                      min={2000}
-                      max={2100}
-                      value={year}
-                      onChange={(e) => setYear(Number(e.target.value) || 2016)}
-                      disabled
-                    />
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    <div className="space-y-2">
+                      <Label htmlFor="opendss-year">Year</Label>
+                      <Input
+                        id="opendss-year"
+                        type="number"
+                        min={2000}
+                        max={2100}
+                        value={year}
+                        onChange={(e) => setYear(Number(e.target.value) || 2016)}
+                        disabled
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Month</Label>
+                      <Select
+                        value={month}
+                        onValueChange={(v) => {
+                          setMonth(v);
+                          const maxDay = new Date(year, Number(v), 0).getDate();
+                          if (Number(day) > maxDay) setDay(String(maxDay));
+                        }}
+                        disabled={isRunning}
+                      >
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {MONTHS.map((m, i) => (
+                            <SelectItem key={m} value={String(i + 1)}>{m}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Day</Label>
+                      <Select value={day} onValueChange={setDay} disabled={isRunning}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {Array.from(
+                            { length: new Date(year, Number(month), 0).getDate() },
+                            (_, i) => i + 1,
+                          ).map((d) => (
+                            <SelectItem key={d} value={String(d)}>{d}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label>Month</Label>
-                    <Select
-                      value={month}
-                      onValueChange={(v) => {
-                        setMonth(v);
-                        const maxDay = new Date(year, Number(v), 0).getDate();
-                        if (Number(day) > maxDay) setDay(String(maxDay));
-                      }}
-                      disabled={isRunning}
-                    >
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {MONTHS.map((m, i) => (
-                          <SelectItem key={m} value={String(i + 1)}>{m}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Day</Label>
-                    <Select value={day} onValueChange={setDay} disabled={isRunning}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {Array.from(
-                          { length: new Date(year, Number(month), 0).getDate() },
-                          (_, i) => i + 1,
-                        ).map((d) => (
-                          <SelectItem key={d} value={String(d)}>{d}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              </Card>
+                </Card>
+              ) : (
+                /* Power flow: Date & Time card */
+                <PowerFlowDateTimeCard
+                  year={year} month={month} day={day}
+                  pfTime={pfTime} isRunning={isRunning}
+                  setMonth={setMonth} setDay={setDay} setPfTime={setPfTime}
+                />
+              )}
             </>
           ) : (
             /* ── Standard SimBench: Simulation + Horizon cards ────────── */
@@ -443,12 +547,35 @@ function ScenarioBuilder() {
                   <div className="text-sm font-semibold">Simulation</div>
                 </div>
                 <div className="grid gap-6 sm:grid-cols-2">
+                  {/* Simulation type toggle */}
                   <div className="space-y-2">
                     <Label>Simulation type</Label>
-                    <div className="rounded-md border border-primary bg-primary/5 p-3">
-                      <div className="font-medium text-sm">Time-series</div>
-                      <div className="text-xs text-muted-foreground">Profile-driven sweep</div>
-                    </div>
+                    <RadioGroup
+                      value={simType}
+                      onValueChange={(v) => setSimType(v as SimType)}
+                      className="grid gap-2"
+                    >
+                      {([
+                        { value: "time_series", label: "Time-series", desc: "Profile-driven sweep" },
+                        { value: "power_flow",  label: "Power flow",  desc: "Single-timestep snapshot" },
+                      ] as const).map((opt) => (
+                        <Label
+                          key={opt.value}
+                          className={
+                            "flex items-start gap-3 rounded-md border p-3 cursor-pointer transition-colors " +
+                            (simType === opt.value
+                              ? "border-primary bg-primary/5"
+                              : "border-border hover:bg-muted/40")
+                          }
+                        >
+                          <RadioGroupItem value={opt.value} className="hidden" />
+                          <div>
+                            <div className="font-medium text-sm">{opt.label}</div>
+                            <div className="text-xs text-muted-foreground">{opt.desc}</div>
+                          </div>
+                        </Label>
+                      ))}
+                    </RadioGroup>
                   </div>
 
                   <div className="space-y-2">
@@ -478,93 +605,103 @@ function ScenarioBuilder() {
                 </div>
               </Card>
 
-              <Card className="p-6">
-                <div className="flex items-center gap-2 mb-1">
-                  <CalendarClock className="h-4 w-4 text-primary" />
-                  <div className="text-sm font-semibold">Simulation horizon</div>
-                </div>
-                <p className="text-xs text-muted-foreground mb-4">
-                  Choose the time window the simulation should cover.
-                </p>
-
-                <RadioGroup
-                  value={horizon}
-                  onValueChange={(v) => setHorizon(v as Horizon)}
-                  className="grid gap-2 sm:grid-cols-3 mb-6"
-                >
-                  {([
-                    { value: "day",   label: "Day",   desc: "24 h sweep" },
-                    { value: "week",  label: "Week",  desc: "7-day window" },
-                    { value: "month", label: "Month", desc: "Full month" },
-                  ] as const).map((opt) => (
-                    <Label
-                      key={opt.value}
-                      className={
-                        "flex items-start gap-3 rounded-md border p-3 cursor-pointer transition-colors " +
-                        (horizon === opt.value
-                          ? "border-primary bg-primary/5"
-                          : "border-border hover:bg-muted/40")
-                      }
-                    >
-                      <RadioGroupItem value={opt.value} className="mt-1" />
-                      <div>
-                        <div className="font-medium text-sm">{opt.label}</div>
-                        <div className="text-xs text-muted-foreground">{opt.desc}</div>
-                      </div>
-                    </Label>
-                  ))}
-                </RadioGroup>
-
-                <p className="text-xs text-muted-foreground mb-4">
-                  Simulations are based on SimBench profiles.
-                </p>
-
-                <div className="grid gap-4 sm:grid-cols-3">
-                  <div className="space-y-2">
-                    <Label htmlFor="year">Year</Label>
-                    <Input
-                      id="year"
-                      type="number"
-                      min={2000}
-                      max={2100}
-                      value={year}
-                      onChange={(e) => setYear(Number(e.target.value) || 2016)}
-                      disabled
-                    />
+              {simType === "time_series" ? (
+                /* Simulation horizon card */
+                <Card className="p-6">
+                  <div className="flex items-center gap-2 mb-1">
+                    <CalendarClock className="h-4 w-4 text-primary" />
+                    <div className="text-sm font-semibold">Simulation horizon</div>
                   </div>
-                  <div className="space-y-2">
-                    <Label>Month</Label>
-                    <Select value={month} onValueChange={(v) => {
-                      setMonth(v);
-                      const maxDay = new Date(year, Number(v), 0).getDate();
-                      if (Number(day) > maxDay) setDay(String(maxDay));
-                    }}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {MONTHS.map((m, i) => (
-                          <SelectItem key={m} value={String(i + 1)}>{m}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  {horizon !== "month" && (
+                  <p className="text-xs text-muted-foreground mb-4">
+                    Choose the time window the simulation should cover.
+                  </p>
+
+                  <RadioGroup
+                    value={horizon}
+                    onValueChange={(v) => setHorizon(v as Horizon)}
+                    className="grid gap-2 sm:grid-cols-3 mb-6"
+                  >
+                    {([
+                      { value: "day",   label: "Day",   desc: "24 h sweep" },
+                      { value: "week",  label: "Week",  desc: "7-day window" },
+                      { value: "month", label: "Month", desc: "Full month" },
+                    ] as const).map((opt) => (
+                      <Label
+                        key={opt.value}
+                        className={
+                          "flex items-start gap-3 rounded-md border p-3 cursor-pointer transition-colors " +
+                          (horizon === opt.value
+                            ? "border-primary bg-primary/5"
+                            : "border-border hover:bg-muted/40")
+                        }
+                      >
+                        <RadioGroupItem value={opt.value} className="mt-1" />
+                        <div>
+                          <div className="font-medium text-sm">{opt.label}</div>
+                          <div className="text-xs text-muted-foreground">{opt.desc}</div>
+                        </div>
+                      </Label>
+                    ))}
+                  </RadioGroup>
+
+                  <p className="text-xs text-muted-foreground mb-4">
+                    Simulations are based on SimBench profiles.
+                  </p>
+
+                  <div className="grid gap-4 sm:grid-cols-3">
                     <div className="space-y-2">
-                      <Label>{horizon === "week" ? "Start day" : "Day"}</Label>
-                      <Select value={day} onValueChange={setDay}>
+                      <Label htmlFor="year">Year</Label>
+                      <Input
+                        id="year"
+                        type="number"
+                        min={2000}
+                        max={2100}
+                        value={year}
+                        onChange={(e) => setYear(Number(e.target.value) || 2016)}
+                        disabled
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Month</Label>
+                      <Select value={month} onValueChange={(v) => {
+                        setMonth(v);
+                        const maxDay = new Date(year, Number(v), 0).getDate();
+                        if (Number(day) > maxDay) setDay(String(maxDay));
+                      }}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
-                          {Array.from(
-                            { length: new Date(year, Number(month), 0).getDate() },
-                            (_, i) => i + 1,
-                          ).map((d) => (
-                            <SelectItem key={d} value={String(d)}>{d}</SelectItem>
+                          {MONTHS.map((m, i) => (
+                            <SelectItem key={m} value={String(i + 1)}>{m}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                     </div>
-                  )}
-                </div>
-              </Card>
+                    {horizon !== "month" && (
+                      <div className="space-y-2">
+                        <Label>{horizon === "week" ? "Start day" : "Day"}</Label>
+                        <Select value={day} onValueChange={setDay}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {Array.from(
+                              { length: new Date(year, Number(month), 0).getDate() },
+                              (_, i) => i + 1,
+                            ).map((d) => (
+                              <SelectItem key={d} value={String(d)}>{d}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+                  </div>
+                </Card>
+              ) : (
+                /* Power flow: Date & Time card */
+                <PowerFlowDateTimeCard
+                  year={year} month={month} day={day}
+                  pfTime={pfTime} isRunning={isRunning}
+                  setMonth={setMonth} setDay={setDay} setPfTime={setPfTime}
+                />
+              )}
             </>
           )}
 
@@ -612,9 +749,16 @@ function ScenarioBuilder() {
             <dl className="space-y-2 text-sm">
               <Row k="Name" v={name} />
               <Row k="Network" v={networks.find((n) => n.id === networkId)?.name ?? "—"} />
-              {isOpenDSSNetwork ? (
+              {simType === "power_flow" ? (
                 <>
-                  <Row k="Type" v="daily power flow" />
+                  <Row k="Type" v="power flow" />
+                  <Row k="Date" v={`${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`} />
+                  <Row k="Time" v={pfTime} />
+                  {lastRunId && <Row k="Run ID" v={lastRunId} />}
+                </>
+              ) : isOpenDSSNetwork ? (
+                <>
+                  <Row k="Type" v="time-series" />
                   <Row k="Mode" v={opendssMode ?? "—"} />
                   <Row k="Horizon" v="day" />
                   <Row k="Date" v={`${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`} />
@@ -672,5 +816,83 @@ function Row({ k, v }: { k: string; v: string }) {
       <dt className="text-muted-foreground">{k}</dt>
       <dd className="font-medium text-right capitalize">{v}</dd>
     </div>
+  );
+}
+
+/** Shared Date & Time card for power-flow mode (SimBench + OpenDSS). */
+function PowerFlowDateTimeCard({
+  year, month, day, pfTime, isRunning,
+  setMonth, setDay, setPfTime,
+}: {
+  year: number; month: string; day: string; pfTime: string; isRunning: boolean;
+  setMonth: (v: string) => void; setDay: (v: string) => void; setPfTime: (v: string) => void;
+}) {
+  // Generate 96 time options at 15-min intervals (00:00 … 23:45)
+  const timeOptions = Array.from({ length: 96 }, (_, i) => {
+    const h = Math.floor(i / 4).toString().padStart(2, "0");
+    const m = ((i % 4) * 15).toString().padStart(2, "0");
+    return `${h}:${m}`;
+  });
+
+  return (
+    <Card className="p-6">
+      <div className="flex items-center gap-2 mb-1">
+        <CalendarClock className="h-4 w-4 text-primary" />
+        <div className="text-sm font-semibold">Date &amp; Time</div>
+      </div>
+      <p className="text-xs text-muted-foreground mb-4">
+        Run a single power-flow snapshot at the chosen date and time (15-min resolution).
+      </p>
+      <div className="grid gap-4 sm:grid-cols-4">
+        <div className="space-y-2">
+          <Label>Year</Label>
+          <Input type="number" value={year} disabled />
+        </div>
+        <div className="space-y-2">
+          <Label>Month</Label>
+          <Select
+            value={month}
+            onValueChange={(v) => {
+              setMonth(v);
+              const maxDay = new Date(year, Number(v), 0).getDate();
+              if (Number(day) > maxDay) setDay(String(maxDay));
+            }}
+            disabled={isRunning}
+          >
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {MONTHS.map((m, i) => (
+                <SelectItem key={m} value={String(i + 1)}>{m}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-2">
+          <Label>Day</Label>
+          <Select value={day} onValueChange={setDay} disabled={isRunning}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {Array.from(
+                { length: new Date(year, Number(month), 0).getDate() },
+                (_, i) => i + 1,
+              ).map((d) => (
+                <SelectItem key={d} value={String(d)}>{d}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-2">
+          <Label>Time</Label>
+          <Select value={pfTime} onValueChange={setPfTime} disabled={isRunning}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {timeOptions.map((t) => (
+                <SelectItem key={t} value={t}>{t}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+    </Card>
   );
 }

@@ -129,7 +129,9 @@ def build_plot_html(fig, code: str, min_height: int = 500) -> str:
     /* ── Modebar ── */
     .modebar-container {{
       top: 12px !important;
-      right: 12px !important;
+      right: 160px !important;
+      
+       
     }}
     .modebar-group {{
       background: {c['bg_card']} !important;
