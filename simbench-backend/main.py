@@ -91,39 +91,118 @@ V_LOWER = 0.94
 V_UPPER = 1.06
 LOAD_LIMIT = 100.0
 
-# ── SimBench in-process cache ─────────────────────────────────────────────────
-# sb.get_simbench_net() + sb.get_absolute_values() each take 35-50 s on first
-# call (CSV parsing).  Cache both by network_id so repeated power-flow or
-# time-series requests on the same network skip the expensive setup entirely.
-# The cache is process-scoped and survives across requests; it is intentionally
-# never evicted (networks don't change at runtime).
-_sb_net_cache: dict[str, object] = {}          # network_id → pandapower net
-_sb_profiles_cache: dict[str, dict] = {}       # network_id → profiles dict
 
-
-def _get_simbench_net_cached(network_id: str):
-    """Return a deep-copied pandapower net for the given SimBench network_id.
-    The canonical copy is loaded once and cached; callers receive a copy so
-    they can mutate element DataFrames (apply profiles) without poisoning the cache.
+def _apply_opendss_profiles_at_step(net, net_dir: Path, ts_idx: int) -> int:
     """
-    import copy
-    import simbench as sb
-    if network_id not in _sb_net_cache:
-        _sb_net_cache[network_id] = sb.get_simbench_net(network_id)
-    return copy.deepcopy(_sb_net_cache[network_id])
+    Parse 09_LoadShapes.dss + 10_Loads.dss from net_dir, add load elements to
+    *net*, and set each load's P/Q to its profile value at *ts_idx* (0-based,
+    30-min resolution → 0..47 for one day).
 
-
-def _get_simbench_profiles_cached(network_id: str, net) -> dict:
-    """Return the absolute-value profiles dict for the given network_id.
-    Profiles are read-only (we only ever do .loc[] lookups), so we return the
-    same object without copying.
+    Returns the number of load elements created. Returns 0 if the DSS profile
+    files are not present (network stays at whatever values net_pp.xlsx has).
     """
-    import simbench as sb
-    if network_id not in _sb_profiles_cache:
-        _sb_profiles_cache[network_id] = sb.get_absolute_values(
-            net, profiles_instead_of_study_cases=True
-        )
-    return _sb_profiles_cache[network_id]
+    import re
+    import numpy as np
+    import pandapower as _pp
+
+    loadshapes_path = net_dir / "09_LoadShapes.dss"
+    loads_path      = net_dir / "10_Loads.dss"
+
+    if not loadshapes_path.exists() or not loads_path.exists():
+        return 0  # DSS files not generated yet — leave nominal loading
+
+    base_dir = str(net_dir)
+
+    # ── 1. Parse load-shape name → CSV path ──────────────────────────────────
+    shapes: dict[str, str | None] = {}   # shape_name → absolute CSV path or None
+    cur_name: str | None = None
+
+    def _set_csv(name: str, rel: str):
+        rel = rel.strip().strip('"').strip("'")
+        shapes[name] = os.path.normpath(os.path.join(base_dir, rel))
+
+    with open(loadshapes_path, "r", encoding="utf-8", errors="ignore") as fh:
+        for raw in fh:
+            line = raw.strip()
+            if not line or line.startswith("!"):
+                continue
+            m = re.match(r"(?i)^new\s+loadshape\.([^\s]+)\s*(.*)", line)
+            if m:
+                cur_name = m.group(1)
+                shapes[cur_name] = None
+                mf = re.search(r"(?i)\b(?:file|csvfile)\s*=\s*([^\s)]+)", m.group(2))
+                if mf:
+                    _set_csv(cur_name, mf.group(1))
+            elif cur_name and line.startswith("~"):
+                mf = re.search(r"(?i)\b(?:file|csvfile)\s*=\s*([^\s)]+)", line)
+                if mf:
+                    _set_csv(cur_name, mf.group(1))
+                    continue
+                mf2 = re.search(r"(?i)mult\s*=\s*\([^)]*(?:file|csvfile)\s*=\s*([^\s)]+)", line)
+                if mf2:
+                    _set_csv(cur_name, mf2.group(1))
+
+    # pre-load multiplier arrays (cached by shape name)
+    _mult_cache: dict[str, "pd.Series"] = {}
+
+    def _get_mult(shape_name: str | None) -> float:
+        if not shape_name or shape_name not in shapes or not shapes[shape_name]:
+            return 1.0
+        csv_path = shapes[shape_name]
+        if csv_path not in _mult_cache:
+            try:
+                _mult_cache[csv_path] = pd.read_csv(csv_path, header=None).iloc[:, 0].astype(float)
+            except Exception:
+                _mult_cache[csv_path] = pd.Series(dtype=float)
+        series = _mult_cache[csv_path]
+        return float(series.iloc[ts_idx]) if ts_idx < len(series) else 1.0
+
+    # ── 2. Parse loads.dss → create elements in net at profile-scaled P/Q ────
+    created = 0
+    with open(loads_path, "r", encoding="utf-8", errors="ignore") as fh:
+        for raw in fh:
+            line = raw.strip()
+            if not line or line.startswith("!"):
+                continue
+            if not re.match(r"(?i)^new\s+load\.", line):
+                continue
+            m = re.match(r"(?i)^new\s+load\.([^\s]+)\s+(.*)$", line)
+            if not m:
+                continue
+
+            load_name = m.group(1)
+            kv: dict[str, str] = {}
+            for part in re.split(r"\s+", m.group(2).strip()):
+                if "=" in part:
+                    k, v = part.split("=", 1)
+                    kv[k.strip().lower()] = v.strip()
+
+            bus_raw = kv.get("bus1", "").split(".")[0]   # strip phase suffixes
+            if not bus_raw:
+                continue
+            hits = net.bus.index[net.bus["name"] == bus_raw].tolist()
+            if not hits:
+                continue
+            bus_idx = hits[0]
+
+            p_kw  = float(kv.get("kw", "0"))
+            pf    = max(1e-6, min(0.999999, abs(float(kv.get("pf", "0.95")))))
+            p_mw  = p_kw / 1000.0
+            q_mvar = p_mw * float(np.tan(np.arccos(pf)))
+
+            shape = kv.get("daily") or kv.get("yearly") or kv.get("duty")
+            mult  = _get_mult(shape)
+
+            _pp.create_load(
+                net, bus=bus_idx,
+                p_mw=p_mw * mult,
+                q_mvar=q_mvar * mult,
+                name=load_name,
+                in_service=True,
+            )
+            created += 1
+
+    return created
 
 if PLOTS_DIR.exists():
     app.mount("/plots", StaticFiles(directory=PLOTS_DIR), name="plots")
@@ -1036,22 +1115,25 @@ def run_power_flow(
                     status_code=400,
                     detail="Converted network not found. Run the conversion pipeline first.",
                 )
+            # Apply DSS load profiles at the requested time (30-min resolution, 0-47).
+            # ts_idx 0 = 00:00, 1 = 00:30, 2 = 01:00, … 47 = 23:30
+            _t      = request.time.split(":")
+            ts_idx  = int(_t[0]) * 2 + int(_t[1]) // 30
+            _apply_opendss_profiles_at_step(net, net_dir, ts_idx)
         else:
-            # SimBench — apply profiles at the requested date+time timestep.
-            # Both network loading and profile parsing are cached in-process so
-            # repeated calls on the same network skip the 40-50 s CSV setup.
+            # SimBench — apply profiles at the requested date+time timestep
+            import simbench as sb
             try:
-                net = _get_simbench_net_cached(network_id)
+                net = sb.get_simbench_net(network_id)
             except Exception as exc:
                 raise HTTPException(status_code=400, detail=f"Cannot load SimBench network: {exc}")
 
-            profiles = _get_simbench_profiles_cached(network_id, net)
+            profiles = sb.get_absolute_values(net, profiles_instead_of_study_cases=True)
             dt_req   = datetime.strptime(f"{request.date} {request.time}", "%Y-%m-%d %H:%M")
             ts_idx   = (dt_req.timetuple().tm_yday - 1) * 96 + dt_req.hour * 4 + dt_req.minute // 15
 
             # get_absolute_values() returns {(element_type, param): DataFrame}
             # Each DataFrame has timesteps as rows and element indices as columns.
-            applied = 0
             for (element_type, param), profile_df in profiles.items():
                 if (
                     isinstance(element_type, str)
@@ -1063,11 +1145,6 @@ def run_power_flow(
                     for el_idx, value in row.items():
                         if el_idx in net[element_type].index:
                             net[element_type].at[el_idx, param] = value
-                            applied += 1
-            _logger.info(
-                "Profile application: ts_idx=%d, %d values written to network elements",
-                ts_idx, applied,
-            )
 
         # Always run balanced power flow — pf_res_plotly requires balanced results
         pp.runpp(net, numba=False)
@@ -1463,9 +1540,12 @@ def run_simulation(network_id: str, request: RunRequest, _cu: dict = Depends(get
         raise HTTPException(status_code=400, detail="Only balanced mode is supported for SimBench networks")
 
     try:
-        net = _get_simbench_net_cached(network_id)
+        net = sb.get_simbench_net(network_id)
 
-        profiles = _get_simbench_profiles_cached(network_id, net)
+        profiles = sb.get_absolute_values(
+            net,
+            profiles_instead_of_study_cases=True
+        )
 
         sb.apply_const_controllers(net, profiles)
 

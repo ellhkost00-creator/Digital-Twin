@@ -504,24 +504,6 @@
     "plot_url": "/plots/1-LV-urban6--2-no_sw.html"
   },
   {
-    "id": "opendss-3-unbalanced",
-    "name": "OpenDSS Urban HPK11 – Unbalanced",
-    "voltage": "66 kV / 22 kV / 0.4 kV",
-    "type": "Mixed",
-    "status": "converted",
-    "created": "2026-05-09",
-    "version": "v1.0",
-    "buses": 11189,
-    "lines": 11143,
-    "transformers": 45,
-    "loads": 0,
-    "plot_url": "/plots/opendss-3-unbalanced.html",
-    "source": "opendss",
-    "mode": "unbalanced",
-    "validation_day": null,
-    "metrics": null
-  },
-  {
     "id": "opendss-2-balanced",
     "name": "OpenDSS Rural KLO14 – Balanced",
     "voltage": "66 kV / 22 kV / 0.4 kV",
@@ -582,7 +564,7 @@
     "voltage": "66 kV / 22 kV / 0.4 kV",
     "type": "Mixed",
     "status": "converted",
-    "created": "2026-05-10",
+    "created": "2026-05-11",
     "version": "v1.0",
     "buses": 11189,
     "lines": 11143,
