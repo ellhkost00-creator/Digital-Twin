@@ -9,6 +9,7 @@ import {
   HardHat,
   Book,
   ShieldCheck,
+  Wrench,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,7 +17,6 @@ import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { setToken } from "@/lib/auth";
 import { loginApi, registerApi } from "@/lib/api";
-
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
@@ -31,10 +31,11 @@ const features = [
   { icon: PlayCircle, title: "Power-flow & time-series", desc: "Run balanced and unbalanced studies on MV/LV grids." },
   { icon: AlertTriangle, title: "Violation detection", desc: "Auto-flag voltage and overload limits across runs." },
   { icon: Network, title: "Network library", desc: "Curated benchmarks and your own pandapower models." },
+  { icon: Wrench, title: "Conversion and Validation", desc: "Convert networks from other formats to pandapower and validate their integrity." }
 ];
 
 const stats = [
-  { v: "120+", l: "Networks" },
+  { v: "40+", l: "Networks" },
   { v: "3.2k", l: "Runs / month" },
   { v: "98.7%", l: "Convergence" },
 ];
@@ -91,7 +92,7 @@ function LoginPage() {
   return (
     <div className="min-h-screen flex flex-col lg:flex-row bg-background">
       {/* Left brand panel */}
-      <div className="relative hidden lg:flex flex-col w-[55%] bg-sidebar text-sidebar-foreground p-10 xl:p-14 overflow-hidden">
+      <div className="relative hidden lg:flex flex-col w-[55%] bg-sidebar text-sidebar-foreground p-8 xl:p-12 2xl:p-16 overflow-hidden">
         <div
           className="absolute inset-0 opacity-30"
           style={{
@@ -122,17 +123,17 @@ function LoginPage() {
         </div>
 
         {/* Headline + content — anchored vertically with controlled spacing */}
-        <div className="relative mt-12 xl:mt-16 max-w-xl space-y-6">
+        <div className="relative mt-12 xl:mt-16 space-y-6">
           <div className="inline-flex items-center gap-2 rounded-full border border-sidebar-border bg-sidebar-accent/40 px-3 py-1 text-xs font-medium text-sidebar-primary">
             <span className="h-1.5 w-1.5 rounded-full bg-sidebar-primary animate-pulse" />
-            Research preview · v0.4
+            Pandapower based platform for distribution network studies
           </div>
           <h1 className="text-3xl xl:text-4xl font-semibold tracking-tight leading-[1.15]">
             Digital Twin Laboratory for Distribution Networks
           </h1>
-          <p className="text-sidebar-foreground/70 text-[15px] leading-relaxed max-w-lg">
+          <p className="text-sidebar-foreground/70 text-[15px] leading-relaxed">
             Model, simulate and analyze MV and LV grids. Run power-flow and
-            time-series studies, detect violations, and compare scenarios — all
+            time-series studies, detect violations, and convert networks from other formats to pandapower — all
             in one workspace.
           </p>
 
@@ -174,7 +175,7 @@ function LoginPage() {
 
         {/* Footer */}
         <div className="relative mt-auto pt-10 flex items-center justify-between text-xs text-sidebar-foreground/50">
-          <span>© 2025 DT Lab Consortium · Internal research use</span>
+          <span>© 2026 • University of Patras </span>
           <span className="inline-flex items-center gap-1.5">
             <ShieldCheck className="h-3.5 w-3.5" />
             JWT secured

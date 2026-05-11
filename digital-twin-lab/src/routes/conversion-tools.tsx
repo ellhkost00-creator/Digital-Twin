@@ -9,7 +9,7 @@ import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import {
   MapPin, Scale, Layers3, ArrowRight, ArrowLeft,
-  CheckCircle2, Loader2, AlertCircle, Bus, Cable, Zap, Users,
+  CheckCircle2, Loader2, AlertCircle, Bus, Cable, Zap, Users, Plug,
   CalendarDays, TrendingUp, Database, Activity, ChevronDown,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
@@ -200,6 +200,7 @@ function ConversionResult({
     { label: "Buses",        value: result.network_stats.buses,        icon: Bus },
     { label: "Lines",        value: result.network_stats.lines,        icon: Cable },
     { label: "Transformers", value: result.network_stats.transformers, icon: Zap },
+    { label: "Loads",        value: result.network_stats.loads,        icon: Plug },
     
   ];
 
