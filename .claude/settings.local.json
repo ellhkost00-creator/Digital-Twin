@@ -48,7 +48,8 @@
       "Bash(Remove-Item \"C:\\\\Users\\\\anton\\\\Desktop\\\\DT\\\\simbench-backend\\\\data\\\\plots\\\\opendss-*.html\" -ErrorAction SilentlyContinue)",
       "Bash(Remove-Item \"C:\\\\Users\\\\anton\\\\Desktop\\\\DT\\\\simbench-backend\\\\data\\\\plots\\\\opendss-*.height\" -ErrorAction SilentlyContinue)",
       "Bash(Write-Host \"Deleted cached OpenDSS plot files\")",
-      "Bash(rm -f /mnt/c/Users/anton/Desktop/DT/simbench-backend/data/plots/opendss-*.html /mnt/c/Users/anton/Desktop/DT/simbench-backend/data/plots/opendss-*.height && echo \"Deleted\")"
+      "Bash(rm -f /mnt/c/Users/anton/Desktop/DT/simbench-backend/data/plots/opendss-*.html /mnt/c/Users/anton/Desktop/DT/simbench-backend/data/plots/opendss-*.height && echo \"Deleted\")",
+      "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\anton\\\\Desktop\\\\DT\" | Select-Object Name, @{Name=\"Type\";Expression={if\\($_.PSIsContainer\\){\"Directory\"}else{\"File\"}}} | Format-Table)"
     ]
   }
 }
