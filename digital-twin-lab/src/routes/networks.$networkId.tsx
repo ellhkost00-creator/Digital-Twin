@@ -129,7 +129,9 @@ function NetworkDetail() {
       )}>
         {/* Topology */}
         <Card className="p-0 overflow-hidden">
-          <div className="px-5 pt-5 pb-3 text-sm font-semibold">Topology overview</div>
+          {!n.id.startsWith("opendss-") && (
+            <div className="px-5 pt-5 pb-3 text-sm font-semibold">Topology overview</div>
+          )}
           {plotSrc ? (
             <div className="relative h-[600px]">
               {plotLoading && (

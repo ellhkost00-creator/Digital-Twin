@@ -200,7 +200,7 @@ interface FetchState {
  * Row 1 = worst-case maximum per element (for over-voltage / overload checks)
  */
 function columnSummaryToParsedCsv(summary: PhaseColumnSummary): ParsedCsv {
-  return { columns: summary.columns, rows: [summary.min, summary.max] };
+  return { columns: summary.columns, rows: [summary.min, summary.max], index: ["min", "max"] };
 }
 
 const _EMPTY_FETCH: FetchState = {

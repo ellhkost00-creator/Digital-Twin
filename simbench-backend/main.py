@@ -330,6 +330,7 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
+
 def load_networks():
     if not DATA_FILE.exists():
         return []
