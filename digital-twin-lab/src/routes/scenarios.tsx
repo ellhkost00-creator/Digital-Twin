@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { AppShell, PageHeader } from "@/components/app-shell";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -65,11 +65,12 @@ type OpenDSSRunState =
   | { phase: "done"; result: OpenDSSRunResult }
   | { phase: "error"; message: string };
 
-/** Convert a calendar date to a 1-based day-of-year (1–366). */
+/** Convert a calendar date to a 1-based day-of-year (1–366).
+ *  Uses Date.UTC to avoid DST-offset errors in local-time Date constructors. */
 function toDayOfYear(y: number, m: number, d: number): number {
-  const start = new Date(y, 0, 0);
-  const date  = new Date(y, m - 1, d);
-  return Math.floor((date.getTime() - start.getTime()) / 86_400_000);
+  const start = Date.UTC(y, 0, 0);   // Dec 31 of (y-1), midnight UTC
+  const date  = Date.UTC(y, m - 1, d);
+  return Math.round((date - start) / 86_400_000);
 }
 
 function ScenarioBuilder() {
@@ -102,6 +103,11 @@ function ScenarioBuilder() {
 
   const isOpenDSSNetwork = networkId.startsWith("opendss-");
   const opendssMode = isOpenDSSNetwork ? networkId.split("-")[2] : null;
+
+  // OpenDSS data covers year 2014 (non-leap); SimBench uses 2016.
+  useEffect(() => {
+    setYear(isOpenDSSNetwork ? 2014 : 2016);
+  }, [isOpenDSSNetwork]);
 
   // ── Standard SimBench handler ───────────────────────────────────────────────
   // ── Standard SimBench handler ───────────────────────────────────────────────
@@ -490,7 +496,7 @@ function ScenarioBuilder() {
                         min={2000}
                         max={2100}
                         value={year}
-                        onChange={(e) => setYear(Number(e.target.value) || 2016)}
+                        onChange={(e) => setYear(Number(e.target.value) || 2014)}
                         disabled
                       />
                     </div>
