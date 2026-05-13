@@ -359,6 +359,22 @@ def save_network(data: dict) -> bool:
         return False
 
 
+def update_network_loads(network_id: str, loads: int) -> bool:
+    """Patch the loads count for a single network row. Silent no-op if DB unavailable."""
+    if not db_available():
+        return False
+    try:
+        with _Session() as session:
+            row = session.query(NetworkRecord).filter_by(id=network_id).first()
+            if row:
+                row.loads = loads
+                session.commit()
+        return True
+    except SQLAlchemyError as exc:
+        logger.warning("Could not update loads for %s: %s", network_id, exc)
+        return False
+
+
 def delete_network(network_id: str) -> bool:
     """
     Delete a network record from PostgreSQL by id.

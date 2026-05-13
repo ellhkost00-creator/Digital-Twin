@@ -20,7 +20,7 @@ from db import (
     get_db_users, save_user, update_user_role, delete_user, seed_users,
     save_validation_metrics, get_latest_validation,
     init_db, save_network, delete_network, save_run, delete_run, seed_networks_from_file,
-    get_user_by_email, update_user_password,
+    get_user_by_email, update_user_password, update_network_loads,
 )
 from auth_utils import (
     hash_password, verify_password, create_access_token,
@@ -42,6 +42,20 @@ async def lifespan(app: FastAPI):
         seed_networks_from_file(DATA_FILE)
     # Seed 5 hardcoded users if users table is empty.
     seed_users()
+    # Back-fill load counts for OpenDSS networks saved before this fix.
+    # _count_dss_loads reads 10_Loads.dss and is fast (no pandapower load needed).
+    _existing = get_db_networks() or []
+    for _nw in _existing:
+        _nid = _nw.get("id", "")
+        if not _nid.startswith("opendss-") or (_nw.get("loads") or 0) != 0:
+            continue
+        _parts = _nid.split("-")
+        if len(_parts) != 3 or _parts[1] not in NANDO_NETWORK_NAMES:
+            continue
+        _nd = NANDO_ROOT / "dss_files" / f"net_{_parts[1]}_{NANDO_NETWORK_NAMES[_parts[1]]}"
+        _dsl = _count_dss_loads(_nd)
+        if _dsl > 0:
+            update_network_loads(_nid, _dsl)
     yield
 
 
@@ -421,8 +435,27 @@ def _run_nando_step(script_rel: str, label: str, env: dict):
         raise RuntimeError(f"Step '{label}' failed:\n{tail}")
 
 
-def _network_stats_from_pp(net_xlsx: Path, net_json: Path, mode: str) -> dict:
-    """Load the converted pandapower network and return element counts."""
+def _count_dss_loads(net_dir: Path) -> int:
+    """Count load elements in 10_Loads.dss (these are not stored in net_pp.*)."""
+    import re as _re
+    loads_path = net_dir / "10_Loads.dss"
+    if not loads_path.exists():
+        return 0
+    count = 0
+    with open(loads_path, "r", encoding="utf-8", errors="ignore") as _fh:
+        for _line in _fh:
+            if _re.match(r"(?i)^\s*new\s+load\.", _line):
+                count += 1
+    return count
+
+
+def _network_stats_from_pp(net_xlsx: Path, net_json: Path, mode: str, dss_dir: Path | None = None) -> dict:
+    """Load the converted pandapower network and return element counts.
+
+    *dss_dir* should be the network's DSS directory (e.g. net_1_Rural_SMR8/).
+    When provided the load count is read from 10_Loads.dss, because OpenDSS
+    loads are not stored in net_pp.xlsx / net_pp.json.
+    """
     import pandapower as pp
     try:
         if mode == "unbalanced" and net_json.exists():
@@ -431,11 +464,12 @@ def _network_stats_from_pp(net_xlsx: Path, net_json: Path, mode: str) -> dict:
             net = pp.from_excel(str(net_xlsx))
         else:
             return {}
+        loads = _count_dss_loads(dss_dir) if dss_dir is not None else len(net.load)
         return {
-            "buses": len(net.bus),
-            "lines": len(net.line),
+            "buses":        len(net.bus),
+            "lines":        len(net.line),
             "transformers": len(net.trafo),
-            "loads": len(net.load),
+            "loads":        loads,
         }
     except Exception:
         return {}
@@ -558,7 +592,7 @@ def convert_opendss(request: ConvertOpenDSSRequest, _cu: dict = Depends(get_curr
     )
 
     if already_converted:
-        stats = _network_stats_from_pp(net_xlsx=net_xlsx, net_json=net_json, mode=request.mode)
+        stats = _network_stats_from_pp(net_xlsx=net_xlsx, net_json=net_json, mode=request.mode, dss_dir=net_dir)
         network_id = f"opendss-{request.network}-{request.mode}"
         display_name = f"OpenDSS {network_name.replace('_', ' ')} – {request.mode.capitalize()}"
         plot_url, plot_height = _generate_opendss_plot(network_id, net_xlsx, net_json, request.mode, display_name)
@@ -591,7 +625,7 @@ def convert_opendss(request: ConvertOpenDSSRequest, _cu: dict = Depends(get_curr
 
     duration_seconds = (datetime.now() - start_time).total_seconds()
 
-    stats = _network_stats_from_pp(net_xlsx=net_xlsx, net_json=net_json, mode=request.mode)
+    stats = _network_stats_from_pp(net_xlsx=net_xlsx, net_json=net_json, mode=request.mode, dss_dir=net_dir)
     network_id = f"opendss-{request.network}-{request.mode}"
     display_name = f"OpenDSS {network_name.replace('_', ' ')} – {request.mode.capitalize()}"
     plot_url, plot_height = _generate_opendss_plot(network_id, net_xlsx, net_json, request.mode, display_name)
@@ -940,6 +974,7 @@ def save_opendss_network(request: SaveOpenDSSRequest, _cu: dict = Depends(get_cu
         net_xlsx=net_dir / "net_pp.xlsx",
         net_json=net_dir / "net_pp_3ph_ready.json",
         mode=request.mode,
+        dss_dir=net_dir,
     )
     if not stats:
         raise HTTPException(
