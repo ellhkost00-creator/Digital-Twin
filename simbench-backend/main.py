@@ -373,6 +373,15 @@ def _run_nando_step(script_rel: str, label: str, env: dict):
         text=True,
         encoding="utf-8",
     )
+    print(f"\n========== {label} ==========")
+
+    if result.stdout:
+        print(result.stdout)
+
+    if result.stderr:
+        print(result.stderr)
+
+    print(f"========== END {label} ==========\n")
     if result.returncode != 0:
         tail = (result.stderr or result.stdout or "")[-3000:]
         raise RuntimeError(f"Step '{label}' failed:\n{tail}")
