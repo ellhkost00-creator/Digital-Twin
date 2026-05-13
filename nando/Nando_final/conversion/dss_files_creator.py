@@ -413,6 +413,7 @@ class DSSExporter:
 
     def loadshapes_and_loads(self, selected_day: int, seed: int):
         np.random.seed(seed)
+        profile_map: dict = {}
 
         # Load profile arrays
         house_data = np.load(str(config.RES_PROFILE_NPY))
@@ -429,8 +430,10 @@ class DSSExporter:
 
             if is_res:
                 # pick random house profile
-                prof = house_data[np.random.randint(len(house_data)), selected_day - 1, :]
+                pidx = np.random.randint(len(house_data))
+                prof = house_data[pidx, selected_day - 1, :]
                 shape_name = f"Load_shape_res_{idx}"
+                profile_map[shape_name] = {"type": "res", "profile_idx": int(pidx)}
 
                 # export CSV (48 lines)
                 csv_name = f"{shape_name}.csv"
@@ -454,11 +457,13 @@ class DSSExporter:
                 # (όπως στον κώδικα σου)
                 tx_cap = row.get("tx_cap", None)
                 while True:
-                    prof = com_data[np.random.randint(len(com_data)), selected_day - 1, :]
+                    pidx = np.random.randint(len(com_data))
+                    prof = com_data[pidx, selected_day - 1, :]
                     if tx_cap is None or (np.max(prof) < tx_cap / 2):
                         break
 
                 shape_name = f"Load_shape_com_{idx}"
+                profile_map[shape_name] = {"type": "com", "profile_idx": int(pidx)}
                 csv_name = f"{shape_name}.csv"
                 csv_path = os.path.join(self.profiles_dir, csv_name)
                 np.savetxt(csv_path, prof.reshape(-1), fmt="%.8f")
@@ -472,6 +477,13 @@ class DSSExporter:
                     f"kw=1 conn=wye kv={row['kv']} pf={row['pf']} model=1 "
                     f"vminpu=0.0 vmaxpu=2 status={row['model']} daily={shape_name} enabled=true"
                 )
+
+        # Save profile index map so run_power_flow can use any day from the .npy arrays
+        import json as _json
+        map_path = os.path.join(self.profiles_dir, "profile_map.json")
+        with open(map_path, "w", encoding="utf-8") as _f:
+            _json.dump(profile_map, _f)
+        print(f"[INFO] profile_map.json saved ({len(profile_map)} entries)")
 
     def other_commands_master(self, note: str = ""):
         # αν θες metadata/σχόλια μέσα σε ένα file

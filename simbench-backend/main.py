@@ -62,6 +62,10 @@ RESULTS_DIR = Path("data/results")
 # Path to the nando Nando_final directory (sibling of simbench-backend in the repo root)
 NANDO_ROOT = Path(__file__).parent.parent / "nando" / "Nando_final"
 
+# Full-year load profile arrays for OpenDSS networks (shape: (N_profiles, 365, 48))
+_RES_NPY = NANDO_ROOT / "excels" / "Res_load_data_30min_res.npy"
+_COM_NPY = NANDO_ROOT / "excels" / "Com_load_data_30min_res.npy"
+
 try:
     from generate_networks import COLORS, style_traces, build_plot_html, compute_min_height
     _PLOT_HELPERS_AVAILABLE = True
@@ -92,11 +96,16 @@ V_UPPER = 1.06
 LOAD_LIMIT = 100.0
 
 
-def _apply_opendss_profiles_at_step(net, net_dir: Path, ts_idx: int) -> int:
+def _apply_opendss_profiles_at_step(net, net_dir: Path, ts_idx: int, day_of_year: int = 0) -> int:
     """
     Parse 09_LoadShapes.dss + 10_Loads.dss from net_dir, add load elements to
     *net*, and set each load's P/Q to its profile value at *ts_idx* (0-based,
     30-min resolution → 0..47 for one day).
+
+    When *day_of_year* > 0 AND profiles/profile_map.json exists, reads the
+    correct day's values directly from the .npy arrays — enabling any calendar
+    day to be simulated, not just the day the CSVs were generated for.
+    Falls back to CSVs (fixed day) if the map is absent.
 
     Returns the number of load elements created. Returns 0 if the DSS profile
     files are not present (network stays at whatever values net_pp.xlsx has).
@@ -142,20 +151,45 @@ def _apply_opendss_profiles_at_step(net, net_dir: Path, ts_idx: int) -> int:
                 if mf2:
                     _set_csv(cur_name, mf2.group(1))
 
-    # pre-load multiplier arrays (cached by shape name)
-    _mult_cache: dict[str, "pd.Series"] = {}
+    # ── 2. Choose multiplier source: .npy fast path or CSV fallback ──────────
+    map_path = net_dir / "profiles" / "profile_map.json"
+    _use_npy = (
+        day_of_year > 0
+        and map_path.exists()
+        and _RES_NPY.exists()
+        and _COM_NPY.exists()
+    )
 
-    def _get_mult(shape_name: str | None) -> float:
-        if not shape_name or shape_name not in shapes or not shapes[shape_name]:
-            return 1.0
-        csv_path = shapes[shape_name]
-        if csv_path not in _mult_cache:
-            try:
-                _mult_cache[csv_path] = pd.read_csv(csv_path, header=None).iloc[:, 0].astype(float)
-            except Exception:
-                _mult_cache[csv_path] = pd.Series(dtype=float)
-        series = _mult_cache[csv_path]
-        return float(series.iloc[ts_idx]) if ts_idx < len(series) else 1.0
+    if _use_npy:
+        _profile_map = json.loads(map_path.read_text(encoding="utf-8"))
+        _res_npy = np.load(str(_RES_NPY))   # (342, 365, 48)
+        _com_npy = np.load(str(_COM_NPY))   # (120, 365, 48)
+        _day_idx = day_of_year - 1           # 0-indexed
+
+        def _get_mult(shape_name: str | None) -> float:
+            if not shape_name or shape_name not in _profile_map:
+                return 1.0
+            entry = _profile_map[shape_name]
+            pidx  = entry["profile_idx"]
+            arr   = _res_npy if entry["type"] == "res" else _com_npy
+            if pidx >= arr.shape[0] or _day_idx >= arr.shape[1] or ts_idx >= arr.shape[2]:
+                return 1.0
+            return float(arr[pidx, _day_idx, ts_idx])
+    else:
+        # CSV fallback — uses whichever day the CSVs were generated for
+        _mult_cache: dict[str, "pd.Series"] = {}
+
+        def _get_mult(shape_name: str | None) -> float:  # type: ignore[misc]
+            if not shape_name or shape_name not in shapes or not shapes[shape_name]:
+                return 1.0
+            csv_path = shapes[shape_name]
+            if csv_path not in _mult_cache:
+                try:
+                    _mult_cache[csv_path] = pd.read_csv(csv_path, header=None).iloc[:, 0].astype(float)
+                except Exception:
+                    _mult_cache[csv_path] = pd.Series(dtype=float)
+            series = _mult_cache[csv_path]
+            return float(series.iloc[ts_idx]) if ts_idx < len(series) else 1.0
 
     # ── 2. Parse loads.dss → create elements in net at profile-scaled P/Q ────
     created = 0
@@ -1124,11 +1158,13 @@ def run_power_flow(
                     status_code=400,
                     detail="Converted network not found. Run the conversion pipeline first.",
                 )
-            # Apply DSS load profiles at the requested time (30-min resolution, 0-47).
+            # Apply DSS load profiles at the requested date+time (30-min resolution, 0-47).
             # ts_idx 0 = 00:00, 1 = 00:30, 2 = 01:00, … 47 = 23:30
-            _t      = request.time.split(":")
-            ts_idx  = int(_t[0]) * 2 + int(_t[1]) // 30
-            _apply_opendss_profiles_at_step(net, net_dir, ts_idx)
+            _t          = request.time.split(":")
+            ts_idx      = int(_t[0]) * 2 + int(_t[1]) // 30
+            dt_req      = datetime.strptime(request.date, "%Y-%m-%d")
+            day_of_year = dt_req.timetuple().tm_yday          # 1-365
+            _apply_opendss_profiles_at_step(net, net_dir, ts_idx, day_of_year)
         else:
             # SimBench — apply profiles at the requested date+time timestep
             import simbench as sb
