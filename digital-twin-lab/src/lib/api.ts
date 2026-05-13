@@ -643,6 +643,30 @@ export async function fetchResultPhases(
   return res.json();
 }
 
+export interface PhaseColumnSummary {
+  columns: string[];
+  min: number[];
+  max: number[];
+  min_step: number[];  // 0-based timestep index of the worst minimum per element
+  max_step: number[];  // 0-based timestep index of the worst maximum per element
+  n_rows: number;      // total number of timesteps in the run
+}
+
+/**
+ * Per-element (per-bus/line/trafo) min/max aggregated across ALL timesteps and
+ * ALL phases.  Correct data for violation detection on unbalanced runs.
+ */
+export async function fetchResultPhasesColumnSummary(
+  networkId: string,
+  runId: string,
+  kind: ResultKind,
+): Promise<PhaseColumnSummary> {
+  const url = `${API_BASE}/networks/${networkId}/results/${runId}/${kind}/phases/column-summary`;
+  const res = await apiFetch(url);
+  if (!res.ok) throw new Error(`Failed to load ${kind} phase column summary (${res.status})`);
+  return res.json();
+}
+
 export async function fetchResultPhasesColumn(
   networkId: string,
   runId: string,

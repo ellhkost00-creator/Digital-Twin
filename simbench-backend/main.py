@@ -1087,8 +1087,8 @@ def run_opendss_simulation(network_id: str, request: OpenDSSRunRequest, _cu: dic
                     shutil.rmtree(dst)
                 shutil.copytree(src, dst)
 
-    has_trafo = (out_dir / "res_trafo").exists()
-    v = compute_violation_counts(out_dir, has_trafo)
+    has_trafo = (out_dir / "res_trafo_3ph" if mode == "unbalanced" else out_dir / "res_trafo").exists()
+    v = compute_violation_counts(out_dir, has_trafo, mode=mode)
 
     save_run(
         run_id=run_id,
@@ -1575,33 +1575,74 @@ def delete_network_endpoint(network_id: str, _cu: dict = Depends(require_admin))
         raise HTTPException(status_code=404, detail="Network not found")
 
 
-def compute_violation_counts(out_dir: Path, has_trafo: bool) -> dict:
+def compute_violation_counts(out_dir: Path, has_trafo: bool, mode: str = "balanced") -> dict:
     """
     Scan the simulation CSVs and count per-asset violations using the same
     thresholds as the frontend.  One violation = one asset (bus / line / trafo)
     that breaches the limit at any timestep during the run.
     Returns a dict with under_voltage, over_voltage, line_overload,
     trafo_overload, and total keys.
+
+    For unbalanced runs the 3-phase CSVs (res_bus_3ph, res_line_3ph,
+    res_trafo_3ph) are used; the balanced res_bus/vm_pu.csv is not updated
+    by pp_timeseries_3ph.py and would contain stale data from a previous run.
     """
     counts = dict(under_voltage=0, over_voltage=0,
                   line_overload=0, trafo_overload=0)
     try:
-        vm_path = out_dir / "res_bus" / "vm_pu.csv"
-        if vm_path.exists():
-            vm = pd.read_csv(vm_path, sep=";", index_col=0)
-            counts["under_voltage"] = int((vm.min() < V_LOWER).sum())
-            counts["over_voltage"]  = int((vm.max() > V_UPPER).sum())
+        if mode == "unbalanced":
+            # ── 3-phase results ───────────────────────────────────────────────
+            bus3_dir = out_dir / "res_bus_3ph"
+            vm_phases = []
+            for ph in ("vm_a_pu.csv", "vm_b_pu.csv", "vm_c_pu.csv"):
+                p = bus3_dir / ph
+                if p.exists():
+                    vm_phases.append(pd.read_csv(p, sep=";", index_col=0))
+            if vm_phases:
+                vm_min = pd.concat([df.min() for df in vm_phases], axis=1).min(axis=1)
+                vm_max = pd.concat([df.max() for df in vm_phases], axis=1).max(axis=1)
+                counts["under_voltage"] = int((vm_min < V_LOWER).sum())
+                counts["over_voltage"]  = int((vm_max > V_UPPER).sum())
 
-        line_path = out_dir / "res_line" / "loading_percent.csv"
-        if line_path.exists():
-            line = pd.read_csv(line_path, sep=";", index_col=0)
-            counts["line_overload"] = int((line.max() > LOAD_LIMIT).sum())
+            line3_dir = out_dir / "res_line_3ph"
+            line_phases = []
+            for ph in ("loading_a_percent.csv", "loading_b_percent.csv", "loading_c_percent.csv"):
+                p = line3_dir / ph
+                if p.exists():
+                    line_phases.append(pd.read_csv(p, sep=";", index_col=0))
+            if line_phases:
+                line_max = pd.concat([df.max() for df in line_phases], axis=1).max(axis=1)
+                counts["line_overload"] = int((line_max > LOAD_LIMIT).sum())
 
-        if has_trafo:
-            trafo_path = out_dir / "res_trafo" / "loading_percent.csv"
-            if trafo_path.exists():
-                trafo = pd.read_csv(trafo_path, sep=";", index_col=0)
-                counts["trafo_overload"] = int((trafo.max() > LOAD_LIMIT).sum())
+            if has_trafo:
+                trafo3_dir = out_dir / "res_trafo_3ph"
+                trafo_phases = []
+                for ph in ("loading_a_percent.csv", "loading_b_percent.csv", "loading_c_percent.csv"):
+                    p = trafo3_dir / ph
+                    if p.exists():
+                        trafo_phases.append(pd.read_csv(p, sep=";", index_col=0))
+                if trafo_phases:
+                    trafo_max = pd.concat([df.max() for df in trafo_phases], axis=1).max(axis=1)
+                    counts["trafo_overload"] = int((trafo_max > LOAD_LIMIT).sum())
+        else:
+            # ── Balanced results ──────────────────────────────────────────────
+            vm_path = out_dir / "res_bus" / "vm_pu.csv"
+            if vm_path.exists():
+                vm = pd.read_csv(vm_path, sep=";", index_col=0)
+                counts["under_voltage"] = int((vm.min() < V_LOWER).sum())
+                counts["over_voltage"]  = int((vm.max() > V_UPPER).sum())
+
+            line_path = out_dir / "res_line" / "loading_percent.csv"
+            if line_path.exists():
+                line = pd.read_csv(line_path, sep=";", index_col=0)
+                counts["line_overload"] = int((line.max() > LOAD_LIMIT).sum())
+
+            if has_trafo:
+                trafo_path = out_dir / "res_trafo" / "loading_percent.csv"
+                if trafo_path.exists():
+                    trafo = pd.read_csv(trafo_path, sep=";", index_col=0)
+                    counts["trafo_overload"] = int((trafo.max() > LOAD_LIMIT).sum())
+
     except Exception as exc:
         # Non-fatal: return whatever was counted so far.
         import logging
@@ -1802,6 +1843,65 @@ def get_result_phases(network_id: str, run_id: str, kind: str, _cu: dict = Depen
             "columns": df.columns.tolist(),
         }
     return result
+
+
+@app.get("/networks/{network_id}/results/{run_id}/{kind}/phases/column-summary")
+def get_result_phases_column_summary(network_id: str, run_id: str, kind: str, _cu: dict = Depends(get_current_user)):
+    """
+    Return per-column (per-element) min/max aggregated across ALL timesteps and
+    ALL phases, plus the timestep index (0-based) at which each element reached
+    its worst min/max value.
+
+    Shape: {
+        columns: [str, ...],
+        min:      [float, ...],
+        max:      [float, ...],
+        min_step: [int, ...],   # timestep index of the worst minimum per element
+        max_step: [int, ...],   # timestep index of the worst maximum per element
+        n_rows:   int,          # total number of timesteps
+    }
+    """
+    entries = _KIND_TO_3PH_PATH.get(kind)
+    if not entries:
+        raise HTTPException(status_code=400, detail=f"No phase data available for kind '{kind}'")
+
+    import numpy as np
+
+    dfs: list[pd.DataFrame] = []
+    columns: list = []
+
+    for phase, sub, fname in entries:
+        path = RESULTS_DIR / network_id / run_id / sub / fname
+        if not path.exists():
+            raise HTTPException(status_code=404, detail=f"Phase {phase.upper()} data not found ({sub}/{fname})")
+        df = pd.read_csv(path, sep=";", index_col=0)
+        dfs.append(df)
+        if not columns:
+            columns = df.columns.tolist()
+
+    # Stack phases along axis-0: shape (n_phases, n_timesteps, n_elements)
+    arr = np.stack([df.values for df in dfs], axis=0)
+    n_phases, n_timesteps, n_elements = arr.shape
+
+    # Flatten phases × timesteps → one long axis for argmin/argmax
+    arr_2d = arr.reshape(n_phases * n_timesteps, n_elements)  # (n_phases*n_timesteps, n_elements)
+
+    col_min = arr_2d.min(axis=0)   # (n_elements,)
+    col_max = arr_2d.max(axis=0)   # (n_elements,)
+
+    # argmin/argmax give position in the flattened (phase, timestep) axis;
+    # mod n_timesteps recovers the 0-based timestep index.
+    min_step = (arr_2d.argmin(axis=0) % n_timesteps).tolist()
+    max_step = (arr_2d.argmax(axis=0) % n_timesteps).tolist()
+
+    return {
+        "columns":  columns,
+        "min":      [round(float(v), 6) for v in col_min],
+        "max":      [round(float(v), 6) for v in col_max],
+        "min_step": [int(s) for s in min_step],
+        "max_step": [int(s) for s in max_step],
+        "n_rows":   n_timesteps,
+    }
 
 
 @app.get("/networks/{network_id}/results/{run_id}/{kind}/phases/column/{col_name:path}")

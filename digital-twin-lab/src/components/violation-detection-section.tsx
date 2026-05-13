@@ -20,6 +20,10 @@ import {
   type ResultKind,
 } from "@/lib/results-data";
 import {
+  fetchResultPhasesColumnSummary,
+  type PhaseColumnSummary,
+} from "@/lib/api";
+import {
   ArrowDown,
   ArrowUp,
   Cable,
@@ -82,6 +86,8 @@ function computeVoltageViolations(
   ts: Date[],
   runId: string,
   horizon: StoredSimulationResult["horizon"],
+  minStepOverride: number[] | null = null,
+  maxStepOverride: number[] | null = null,
 ): { under: RealViolation[]; over: RealViolation[] } {
   const under: RealViolation[] = [];
   const over: RealViolation[] = [];
@@ -94,15 +100,13 @@ function computeVoltageViolations(
     for (let r = 0; r < csv.rows.length; r++) {
       const v = csv.rows[r]?.[c];
       if (typeof v !== "number" || !Number.isFinite(v)) continue;
-      if (v < minV) {
-        minV = v;
-        minStep = r;
-      }
-      if (v > maxV) {
-        maxV = v;
-        maxStep = r;
-      }
+      if (v < minV) { minV = v; minStep = r; }
+      if (v > maxV) { maxV = v; maxStep = r; }
     }
+    // For unbalanced networks the ParsedCsv has only 2 synthetic rows; the real
+    // timestep comes from the step-override arrays returned by column-summary.
+    const effectiveMinStep = minStepOverride?.[c] ?? minStep;
+    const effectiveMaxStep = maxStepOverride?.[c] ?? maxStep;
     const asset = csv.columns[c];
     if (minStep >= 0 && minV < 0.94) {
       under.push({
@@ -112,8 +116,8 @@ function computeVoltageViolations(
         worstValue: minV,
         limit: 0.94,
         severity: voltageSeverity(minV),
-        worstStep: minStep,
-        time: ts[minStep] ? formatAxisTick(ts[minStep], horizon) : "—",
+        worstStep: effectiveMinStep,
+        time: ts[effectiveMinStep] ? formatAxisTick(ts[effectiveMinStep], horizon) : "—",
         runId,
       });
     }
@@ -125,8 +129,8 @@ function computeVoltageViolations(
         worstValue: maxV,
         limit: 1.06,
         severity: voltageSeverity(maxV),
-        worstStep: maxStep,
-        time: ts[maxStep] ? formatAxisTick(ts[maxStep], horizon) : "—",
+        worstStep: effectiveMaxStep,
+        time: ts[effectiveMaxStep] ? formatAxisTick(ts[effectiveMaxStep], horizon) : "—",
         runId,
       });
     }
@@ -141,6 +145,7 @@ function computeLoadingViolations(
   horizon: StoredSimulationResult["horizon"],
   category: "line_overload" | "transformer_overload",
   prefix: string,
+  maxStepOverride: number[] | null = null,
 ): RealViolation[] {
   const out: RealViolation[] = [];
   const cols = csv.columns.length;
@@ -152,6 +157,7 @@ function computeLoadingViolations(
       if (typeof v !== "number" || !Number.isFinite(v)) continue;
       if (v > maxV) { maxV = v; maxStep = r; }
     }
+    const effectiveMaxStep = maxStepOverride?.[c] ?? maxStep;
     if (maxStep >= 0 && maxV > 100) {
       const asset = csv.columns[c];
       out.push({
@@ -161,8 +167,8 @@ function computeLoadingViolations(
         worstValue: maxV,
         limit: 100,
         severity: loadingSeverity(maxV),
-        worstStep: maxStep,
-        time: ts[maxStep] ? formatAxisTick(ts[maxStep], horizon) : "—",
+        worstStep: effectiveMaxStep,
+        time: ts[effectiveMaxStep] ? formatAxisTick(ts[effectiveMaxStep], horizon) : "—",
         runId,
       });
     }
@@ -175,36 +181,72 @@ interface FetchState {
   vm: ParsedCsv | null;
   ll: ParsedCsv | null;
   tl: ParsedCsv | null;
+  // Per-element timestep indices for the worst value (unbalanced only; null = balanced)
+  vmMinStep: number[] | null;
+  vmMaxStep: number[] | null;
+  llMaxStep: number[] | null;
+  tlMaxStep: number[] | null;
+  /** Actual number of timesteps in the run (for building the ts[] array). */
+  nRows: number;
   errors: Partial<Record<ResultKind, string>>;
 }
 
-function useAllCsvs(networkId?: string, runId?: string): FetchState {
+/**
+ * Convert a PhaseColumnSummary (per-element min/max across all timesteps and
+ * all phases) into a 2-row ParsedCsv so the existing violation-compute
+ * functions work unchanged.
+ *
+ * Row 0 = worst-case minimum per element (for under-voltage / threshold checks)
+ * Row 1 = worst-case maximum per element (for over-voltage / overload checks)
+ */
+function columnSummaryToParsedCsv(summary: PhaseColumnSummary): ParsedCsv {
+  return { columns: summary.columns, rows: [summary.min, summary.max] };
+}
+
+const _EMPTY_FETCH: FetchState = {
+  loading: false,
+  vm: null, ll: null, tl: null,
+  vmMinStep: null, vmMaxStep: null, llMaxStep: null, tlMaxStep: null,
+  nRows: 0,
+  errors: {},
+};
+
+function useAllCsvs(networkId?: string, runId?: string, mode?: string): FetchState {
+  const isUnbalanced = mode === "unbalanced";
   const [state, setState] = useState<FetchState>({
+    ..._EMPTY_FETCH,
     loading: !!(networkId && runId),
-    vm: null,
-    ll: null,
-    tl: null,
-    errors: {},
   });
+
   useEffect(() => {
     if (!networkId || !runId) {
-      setState({ loading: false, vm: null, ll: null, tl: null, errors: {} });
+      setState(_EMPTY_FETCH);
       return;
     }
     let cancelled = false;
-    setState({ loading: true, vm: null, ll: null, tl: null, errors: {} });
-    const load = async (kind: ResultKind) => {
+    setState({ ..._EMPTY_FETCH, loading: true });
+
+    type LoadResult = {
+      kind: ResultKind;
+      data: ParsedCsv | null;
+      summary: PhaseColumnSummary | null;
+      error: string | null;
+    };
+
+    const load = async (kind: ResultKind): Promise<LoadResult> => {
       try {
-        const data = await fetchResultCsv(networkId, runId, kind);
-        return { kind, data, error: null as string | null };
+        if (isUnbalanced) {
+          const summary = await fetchResultPhasesColumnSummary(networkId, runId, kind);
+          return { kind, data: columnSummaryToParsedCsv(summary), summary, error: null };
+        } else {
+          const data = await fetchResultCsv(networkId, runId, kind);
+          return { kind, data, summary: null, error: null };
+        }
       } catch (e) {
-        return {
-          kind,
-          data: null as ParsedCsv | null,
-          error: (e as Error).message,
-        };
+        return { kind, data: null, summary: null, error: (e as Error).message };
       }
     };
+
     Promise.all([load("vm-pu"), load("line-loading"), load("trafo-loading")]).then(
       (results) => {
         if (cancelled) return;
@@ -212,19 +254,35 @@ function useAllCsvs(networkId?: string, runId?: string): FetchState {
         let vm: ParsedCsv | null = null;
         let ll: ParsedCsv | null = null;
         let tl: ParsedCsv | null = null;
+        let vmMinStep: number[] | null = null;
+        let vmMaxStep: number[] | null = null;
+        let llMaxStep: number[] | null = null;
+        let tlMaxStep: number[] | null = null;
+        let nRows = 0;
         for (const r of results) {
           if (r.error) errors[r.kind] = r.error;
-          if (r.kind === "vm-pu") vm = r.data;
-          if (r.kind === "line-loading") ll = r.data;
-          if (r.kind === "trafo-loading") tl = r.data;
+          if (r.kind === "vm-pu") {
+            vm = r.data;
+            vmMinStep = r.summary?.min_step ?? null;
+            vmMaxStep = r.summary?.max_step ?? null;
+            if (r.summary?.n_rows) nRows = r.summary.n_rows;
+          }
+          if (r.kind === "line-loading") {
+            ll = r.data;
+            llMaxStep = r.summary?.max_step ?? null;
+            if (r.summary?.n_rows && !nRows) nRows = r.summary.n_rows;
+          }
+          if (r.kind === "trafo-loading") {
+            tl = r.data;
+            tlMaxStep = r.summary?.max_step ?? null;
+          }
         }
-        setState({ loading: false, vm, ll, tl, errors });
+        setState({ loading: false, vm, ll, tl, vmMinStep, vmMaxStep, llMaxStep, tlMaxStep, nRows, errors });
       },
     );
-    return () => {
-      cancelled = true;
-    };
-  }, [networkId, runId]);
+    return () => { cancelled = true; };
+  }, [networkId, runId, isUnbalanced]);
+
   return state;
 }
 
@@ -239,52 +297,35 @@ export function ViolationDetectionSection({
 }) {
   const networkId = runContext?.networkId;
   const effectiveRunId = runContext?.runId ?? runId ?? "";
-  const fetchState = useAllCsvs(networkId, runContext?.runId);
+  const fetchState = useAllCsvs(networkId, runContext?.runId, runContext?.mode);
 
   const violations = useMemo<RealViolation[]>(() => {
     if (!runContext) return [];
-    const { vm, ll, tl } = fetchState;
+    const { vm, ll, tl, vmMinStep, vmMaxStep, llMaxStep, tlMaxStep, nRows } = fetchState;
     const list: RealViolation[] = [];
     const horizon = runContext.horizon;
-    const stepsForTs = Math.max(
-      vm?.rows.length ?? 0,
-      ll?.rows.length ?? 0,
-      tl?.rows.length ?? 0,
-    );
+    // For unbalanced networks the ParsedCsv has only 2 synthetic rows, but we
+    // need ts[] to cover all real timesteps so step overrides can index into it.
+    const stepsForTs = nRows > 0
+      ? nRows
+      : Math.max(vm?.rows.length ?? 0, ll?.rows.length ?? 0, tl?.rows.length ?? 0);
     if (stepsForTs === 0) return [];
     const stepMinutes = runContext.networkId.startsWith("opendss-") ? 30 : 15;
     const ts = generateTimestamps(runContext, stepsForTs, stepMinutes);
     if (vm) {
       const { under, over } = computeVoltageViolations(
-        vm,
-        ts,
-        effectiveRunId,
-        horizon,
+        vm, ts, effectiveRunId, horizon, vmMinStep, vmMaxStep,
       );
       list.push(...under, ...over);
     }
     if (ll) {
       list.push(
-        ...computeLoadingViolations(
-          ll,
-          ts,
-          effectiveRunId,
-          horizon,
-          "line_overload",
-          "Line",
-        ),
+        ...computeLoadingViolations(ll, ts, effectiveRunId, horizon, "line_overload", "Line", llMaxStep),
       );
     }
     if (tl) {
       list.push(
-        ...computeLoadingViolations(
-          tl,
-          ts,
-          effectiveRunId,
-          horizon,
-          "transformer_overload",
-          "Trafo",
-        ),
+        ...computeLoadingViolations(tl, ts, effectiveRunId, horizon, "transformer_overload", "Trafo", tlMaxStep),
       );
     }
     return list;
