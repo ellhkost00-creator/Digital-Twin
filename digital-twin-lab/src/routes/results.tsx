@@ -292,9 +292,23 @@ function Results() {
 
         <div className="flex items-center justify-between mt-5 pt-4 border-t border-border">
           <div className="text-xs text-muted-foreground">
-            {selectedNetwork && selectedRun
-              ? `${selectedNetwork.name} · ${selectedRun.id} · started ${selectedRun.startedAt}`
-              : "Pick a network and a completed run."}
+            {selectedNetwork && selectedRun ? (
+              <>
+                {selectedNetwork.name} · {selectedRun.id}
+                {runContext && (
+                  <> · <span className="font-medium text-foreground">
+                    {runContext.horizon === "month"
+                      ? `${monthName(runContext.month)} ${runContext.year}`
+                      : runContext.day
+                      ? `${runContext.day} ${monthName(runContext.month)} ${runContext.year}`
+                      : `${monthName(runContext.month)} ${runContext.year}`}
+                  </span></>
+                )}
+                {" · started "}{selectedRun.startedAt}
+              </>
+            ) : (
+              "Pick a network and a completed run."
+            )}
           </div>
           <div className="flex items-center gap-2">
             {state === "ready" && (
@@ -658,9 +672,11 @@ function EmptyDataCard({ title, hint }: { title: string; hint: string }) {
 function NetworkTopology({
   networkName,
   networkId,
+  startedAt,
 }: {
   networkName: string;
   networkId: string | null;
+  startedAt?: string;
 }) {
   const [failed, setFailed] = useState(false);
   // Cache-buster: force the browser to fetch the latest plot HTML on every
@@ -677,7 +693,12 @@ function NetworkTopology({
     <Card className={cn("p-0 flex flex-col", isOpenDSS ? "overflow-auto" : "overflow-hidden")}
       style={isOpenDSS ? undefined : { height: 720 }}>
       <div className="flex items-center justify-between px-5 pt-5 pb-3 shrink-0">
-        <div className="text-sm font-semibold">Topology overview</div>
+        <div>
+          <div className="text-sm font-semibold">Topology overview</div>
+          {startedAt && startedAt !== "—" && (
+            <div className="text-xs text-muted-foreground mt-0.5">Simulation date: {startedAt}</div>
+          )}
+        </div>
         <div className="text-xs text-muted-foreground">{networkName}</div>
       </div>
       {src && !failed ? (
