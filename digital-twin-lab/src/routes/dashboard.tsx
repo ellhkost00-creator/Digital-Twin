@@ -108,13 +108,13 @@ function Dashboard() {
     );
     return {
       networks: networks.length,
-      scenarios: scenarios.length,
+      completedRuns: completed.length,
       active,
       openViolations,
       failed,
       lastSuccess,
     };
-  }, [runs, networks, scenarios]);
+  }, [runs, networks]);
 
   const [systemOverview, setSystemOverview] =
     useState<SystemViolationOverview | null>(null);
@@ -126,15 +126,21 @@ function Dashboard() {
       setSystemOverview(null);
       return;
     }
+    // Reset immediately so the loading state is visible while we re-fetch.
+    setSystemOverview(null);
     setSystemLoading(true);
-    computeSystemOverview(
-      runs.map((r) => ({
+    // Only pass runs whose network still exists — deleted networks leave their
+    // result files on disk, so without this filter their violations would
+    // continue to appear even after the network record is removed.
+    const existingNetworkIds = new Set(networks.map((n) => n.id));
+    const activeRuns = runs
+      .map((r) => ({
         id: r.id,
         networkId: (r as { networkId?: string }).networkId,
         status: r.status,
-      })),
-      networks.length,
-    )
+      }))
+      .filter((r) => r.networkId && existingNetworkIds.has(r.networkId));
+    computeSystemOverview(activeRuns, networks.length)
       .then((res) => {
         if (!cancelled) setSystemOverview(res);
       })
@@ -147,7 +153,7 @@ function Dashboard() {
     return () => {
       cancelled = true;
     };
-  }, [runs, networks.length]);
+  }, [runs, networks]);
 
   const networkOverview = useMemo(() => {
     return networks
@@ -248,7 +254,7 @@ function Dashboard() {
   const queuedCount = runs.filter((r) => r.status === "queued").length;
   const summary: SummaryCard[] = [
     { label: "Networks", value: stats.networks, sub: `${networks.filter((n) => n.status === "validated").length} validated`, icon: NetIcon, accent: "neutral", to: "/networks" },
-    { label: "Scenarios", value: stats.scenarios, sub: "view results", icon: FlaskConical, accent: "neutral", to: "/runs" },
+    { label: "Completed Runs", value: stats.completedRuns, sub: "view results", icon: FlaskConical, accent: "neutral", to: "/runs" },
     { label: "Active Runs", value: stats.active, sub: `${runningCount} running · ${queuedCount} queued`, icon: PlayCircle, accent: "info", to: "/runs" },
     
     { label: "Failed Runs", value: stats.failed, sub: stats.failed > 0 ? "needs attention" : "all healthy", icon: XCircle, accent: "destructive", to: "/runs" },
@@ -518,10 +524,10 @@ function Dashboard() {
               {/* Normalized metrics */}
               <div className="grid grid-cols-2 gap-3 mb-4">
                 {[
-                  { label: "Under-voltage", pct: systemOverview.underPct, denom: "of voltage values < 0.94 pu", tone: "text-info", bg: "bg-info/10" },
-                  { label: "Over-voltage", pct: systemOverview.overPct, denom: "of voltage values > 1.06 pu", tone: "text-warning-foreground", bg: "bg-warning/15" },
-                  { label: "Line overload", pct: systemOverview.linePct, denom: "of line loadings > 100%", tone: "text-destructive", bg: "bg-destructive/10" },
-                  { label: "Transformer overload", pct: systemOverview.trafoPct, denom: "of trafo loadings > 100%", tone: "text-destructive", bg: "bg-destructive/10" },
+                  { label: "Under-voltage", pct: systemOverview.underPct, denom: "of buses ever below 0.94 pu", tone: "text-info", bg: "bg-info/10" },
+                  { label: "Over-voltage", pct: systemOverview.overPct, denom: "of buses ever above 1.06 pu", tone: "text-warning-foreground", bg: "bg-warning/15" },
+                  { label: "Line overload", pct: systemOverview.linePct, denom: "of lines ever above 100%", tone: "text-destructive", bg: "bg-destructive/10" },
+                  { label: "Transformer overload", pct: systemOverview.trafoPct, denom: "of trafos ever above 100%", tone: "text-destructive", bg: "bg-destructive/10" },
                 ].map((v) => (
                   <div key={v.label} className={"rounded-md p-3 " + v.bg}>
                     <div className="text-[11px] uppercase tracking-wider text-muted-foreground font-medium truncate">{v.label}</div>

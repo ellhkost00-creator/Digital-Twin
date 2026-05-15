@@ -277,7 +277,7 @@ function ConversionResult({
           <Card className="overflow-auto p-0">
             <div className="px-5 pt-4 pb-3 text-sm font-semibold">Topology overview</div>
             <iframe
-              src={`${API_BASE}${result.plot_url}`}
+              src={`${API_BASE}${result.plot_url}?v=${Date.now()}`}
               title={`${result.network_name} topology`}
               style={{ width: 1200, height: result.plot_height ?? 900, border: 0, display: "block" }}
               scrolling="no"

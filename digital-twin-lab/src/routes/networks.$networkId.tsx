@@ -79,7 +79,9 @@ function NetworkDetail() {
     { label: "Loads",        value: n.loads,        icon: Plug, tone: "text-success" },
   ];
 
-  const plotSrc = n.plot_url ? `${API_BASE}${n.plot_url}` : null;
+  // Append a cache-buster so the browser always fetches the latest plot HTML
+  // instead of serving a stale version from its local cache.
+  const plotSrc = n.plot_url ? `${API_BASE}${n.plot_url}?v=${Date.now()}` : null;
 
   return (
     <AppShell>
@@ -129,9 +131,7 @@ function NetworkDetail() {
       )}>
         {/* Topology */}
         <Card className="p-0 overflow-hidden">
-          {!n.id.startsWith("opendss-") && (
-            <div className="px-5 pt-5 pb-3 text-sm font-semibold">Topology overview</div>
-          )}
+          <div className="px-5 pt-5 pb-3 text-sm font-semibold">Topology overview</div>
           {plotSrc ? (
             <div className="relative h-[600px]">
               {plotLoading && (
@@ -141,7 +141,7 @@ function NetworkDetail() {
               )}
               <iframe
                 src={plotSrc}
-                title={`${n.name} topology plot`}
+                
                 className="w-full h-full border-0 block"
                 loading="lazy"
                 onLoad={() => setPlotLoading(false)}

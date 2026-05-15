@@ -1,5 +1,5 @@
 Matched buses: 11189
 Total points: 22378
-Global MAPE %: 4.133143
-Global Max  %: 4.780101
-Global Bias %: -3.718725
+Global MAPE %: 4.920429
+Global Max  %: 5.829572
+Global Bias %: -4.541594

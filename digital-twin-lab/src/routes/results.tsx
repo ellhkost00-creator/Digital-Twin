@@ -663,7 +663,9 @@ function NetworkTopology({
   networkId: string | null;
 }) {
   const [failed, setFailed] = useState(false);
-  const src = networkId ? `${API_BASE}/plots/${networkId}.html` : null;
+  // Cache-buster: force the browser to fetch the latest plot HTML on every
+  // page visit instead of serving a stale version from its local cache.
+  const src = networkId ? `${API_BASE}/plots/${networkId}.html?v=${Date.now()}` : null;
 
   useEffect(() => {
     setFailed(false);

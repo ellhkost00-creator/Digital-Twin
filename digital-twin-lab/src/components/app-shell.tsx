@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   LayoutGrid,
   Network,
@@ -18,8 +18,20 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { clearToken, getCurrentUserInfo, hasAccess, type RouteKey } from "@/lib/auth";
 import { useRole } from "@/hooks/use-role";
+import { useNetworks } from "@/lib/networks-store";
+import { useRuns } from "@/lib/runs-store";
+import { getAllScenarios } from "@/lib/scenarios-store";
 
 const navItems: { to: RouteKey; label: string; icon: typeof LayoutGrid }[] = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutGrid },
@@ -42,6 +54,150 @@ const knownRoutes: RouteKey[] = [
   "/connection-tool-devices",
   "/users",
 ];
+
+// ── Global search command palette ────────────────────────────────────────────
+
+function GlobalSearch() {
+  const [open, setOpen] = useState(false);
+  const navigate = useNavigate();
+  const networks = useNetworks();
+  const runs = useRuns();
+
+  // Ctrl+K / ⌘K shortcut
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setOpen(true);
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
+  const completedRuns = runs
+    .filter((r) => r.status === "completed")
+    .slice(0, 12);
+
+  const scenarios = getAllScenarios().slice(0, 12);
+
+  function go(to: string, search?: Record<string, string>) {
+    setOpen(false);
+    navigate({ to, search } as Parameters<typeof navigate>[0]);
+  }
+
+  return (
+    <>
+      {/* Trigger — looks like a search box */}
+      <div
+        className="relative flex-1 max-w-md cursor-pointer"
+        onClick={() => setOpen(true)}
+      >
+        <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Input
+          readOnly
+          placeholder="Search networks, scenarios, runs…"
+          className="pl-9 h-9 bg-muted/40 border-transparent cursor-pointer select-none"
+          onFocus={() => setOpen(true)}
+        />
+        <kbd className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 hidden sm:inline-flex h-5 items-center gap-1 rounded border border-border bg-muted px-1.5 text-[10px] font-medium text-muted-foreground">
+          ⌘K
+        </kbd>
+      </div>
+
+      {/* Palette */}
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="p-0 gap-0 overflow-hidden max-w-lg">
+          <Command>
+            <CommandInput placeholder="Search networks, scenarios, runs…" autoFocus />
+            <CommandList className="max-h-96">
+              <CommandEmpty>No results found.</CommandEmpty>
+
+              {/* Pages */}
+              <CommandGroup heading="Pages">
+                {navItems.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <CommandItem
+                      key={item.to}
+                      value={item.label}
+                      onSelect={() => go(item.to)}
+                    >
+                      <Icon className="h-4 w-4 mr-2 text-muted-foreground shrink-0" />
+                      {item.label}
+                    </CommandItem>
+                  );
+                })}
+              </CommandGroup>
+
+              {/* Networks */}
+              {networks.length > 0 && (
+                <CommandGroup heading="Networks">
+                  {networks.map((n) => (
+                    <CommandItem
+                      key={n.id}
+                      value={`${n.name} ${n.id}`}
+                      onSelect={() => go(`/networks/${n.id}`)}
+                    >
+                      <Network className="h-4 w-4 mr-2 text-muted-foreground shrink-0" />
+                      <span className="truncate">{n.name}</span>
+                      <span className="ml-auto text-xs text-muted-foreground shrink-0 pl-2">
+                        {n.voltage}
+                      </span>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              )}
+
+              {/* Scenarios */}
+              {scenarios.length > 0 && (
+                <CommandGroup heading="Scenarios">
+                  {scenarios.map((s) => (
+                    <CommandItem
+                      key={s.id}
+                      value={`${s.name} ${s.id}`}
+                      onSelect={() => go("/scenarios")}
+                    >
+                      <FlaskConical className="h-4 w-4 mr-2 text-muted-foreground shrink-0" />
+                      <span className="truncate">{s.name}</span>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              )}
+
+              {/* Runs */}
+              {completedRuns.length > 0 && (
+                <CommandGroup heading="Recent Runs">
+                  {completedRuns.map((r) => {
+                    const networkId =
+                      (r as typeof r & { networkId?: string }).networkId ?? "";
+                    return (
+                      <CommandItem
+                        key={r.id}
+                        value={`${r.id} ${r.scenarioName}`}
+                        onSelect={() =>
+                          go("/results", { runId: r.id, networkId })
+                        }
+                      >
+                        <ChartSpline className="h-4 w-4 mr-2 text-muted-foreground shrink-0" />
+                        <span className="truncate font-mono text-xs">{r.id}</span>
+                        <span className="ml-2 truncate text-xs text-muted-foreground">
+                          {r.scenarioName}
+                        </span>
+                      </CommandItem>
+                    );
+                  })}
+                </CommandGroup>
+              )}
+            </CommandList>
+          </Command>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const location = useLocation();
@@ -132,13 +288,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       {/* Main */}
       <div className="flex flex-1 flex-col min-w-0">
         <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b border-border bg-card/80 backdrop-blur px-4 md:px-6">
-          <div className="relative flex-1 max-w-md">
-            <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search networks, scenarios, runs…"
-              className="pl-9 h-9 bg-muted/40 border-transparent focus-visible:bg-card"
-            />
-          </div>
+          <GlobalSearch />
           <div className="ml-auto flex items-center gap-3">
             <Button variant="ghost" size="icon" className="relative">
               <Bell className="h-4 w-4" />

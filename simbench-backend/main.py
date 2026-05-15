@@ -516,28 +516,15 @@ def _generate_opendss_plot(network_id: str, net_xlsx: Path, net_json: Path, mode
         plot_height = compute_min_height(fig)
 
         # Layout: match SimBench appearance — responsive, transparent background,
-        # horizontal legend at bottom, network name as title top-right.
+        # horizontal legend at bottom, no in-plot title (name lives in the card header).
         fig.update_layout(
             autosize=True,
             width=None,
             height=None,
-            # Extra top margin (36 px) to make room for the network name title.
-            margin=dict(l=16, r=16, t=36, b=64),
+            margin=dict(l=16, r=16, t=16, b=64),
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor=COLORS["bg_plot"],
-            title=dict(
-                text=label,
-                x=0.98,
-                xanchor="right",
-                y=1.0,
-                yanchor="top",
-                font=dict(
-                    size=11,
-                    color=COLORS["text_muted"],
-                    family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-                ),
-                pad=dict(t=6, r=4),
-            ),
+            title=None,
             font=dict(
                 family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
                 color=COLORS["text_muted"], size=12,
@@ -1253,7 +1240,7 @@ def run_power_flow(
                     if trace.type == "scatter" and hasattr(trace, "line") and trace.line:
                         trace.line.width = 1  # default is ~2, try 1–1.5
             plot_height = compute_min_height(fig)
-            html        = build_plot_html(fig, run_id, plot_height)
+            html        = build_plot_html(fig, run_id, plot_height, modebar_side="right")
             (out_dir / "pf_plot.html").write_text(html, encoding="utf-8")
             plot_url = f"/networks/{network_id}/results/{run_id}/pf-plot"
         except Exception:

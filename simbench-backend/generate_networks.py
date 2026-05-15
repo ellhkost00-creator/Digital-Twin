@@ -71,8 +71,13 @@ def compute_min_height(fig, min_px: int = 500, max_px: int = 3000) -> int:
         return min_px
 
 
-def build_plot_html(fig, code: str, min_height: int = 500) -> str:
-    """Wrap the Plotly figure in a branded, fully responsive HTML shell."""
+def build_plot_html(fig, code: str, min_height: int = 500, modebar_side: str = "left") -> str:
+    """Wrap the Plotly figure in a branded, fully responsive HTML shell.
+
+    modebar_side: "left"  → modebar sits at top-left (default, for timeseries / topology plots)
+                  "right" → modebar sits at top-right offset (for power-flow plots where the
+                            pandapower legend already occupies the right edge)
+    """
 
     plot_div = fig.to_html(
         full_html=False,
@@ -129,9 +134,7 @@ def build_plot_html(fig, code: str, min_height: int = 500) -> str:
     /* ── Modebar ── */
     .modebar-container {{
       top: 12px !important;
-      right: 160px !important;
-      
-       
+      {'right: 160px' if modebar_side == 'right' else 'right: 12px'} !important;
     }}
     .modebar-group {{
       background: {c['bg_card']} !important;

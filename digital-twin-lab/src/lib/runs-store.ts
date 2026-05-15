@@ -8,6 +8,7 @@ import {
 } from "./mock-data";
 import { getAllScenarios } from "./scenarios-store";
 import { fetchRuns, deleteRunApi } from "./api";
+import { removeScenario } from "./scenarios-store";
 import { parseRunId } from "./run-context";
 
 type Listener = () => void;
@@ -176,12 +177,32 @@ export function removeRun(id: string): void {
 /**
  * Delete a run from the backend (DB + result files) and remove it from
  * the in-memory store. Throws on network/API error.
+ *
+ * Also removes the associated scenario so the Scenarios KPI card and the
+ * Violations Overview stay in sync.  Backend-seeded runs land with
+ * scenarioId="" after a page refresh, so we fall back to matching by name +
+ * networkId to still find and remove the parent scenario.
  */
 export async function deleteRun(id: string): Promise<void> {
   const run = runsArray.find((r) => r.id === id) as (Run & { networkId?: string }) | undefined;
   const networkId = run?.networkId ?? "";
+
+  // Resolve scenarioId — prefer the stored field, fall back to name-match
+  // for runs that were re-seeded from the backend (where scenarioId is "").
+  let scenarioId = run?.scenarioId ?? "";
+  if (!scenarioId && run) {
+    const match = getAllScenarios().find(
+      (s) => s.name === run.scenarioName && s.networkId === networkId,
+    );
+    if (match) scenarioId = match.id;
+  }
+
   await deleteRunApi(id, networkId);
   removeRun(id);
+
+  if (scenarioId) {
+    await removeScenario(scenarioId).catch(() => {});
+  }
 }
 
 export function createRun(input: CreateRunInput): string {

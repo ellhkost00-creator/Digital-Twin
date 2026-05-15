@@ -29,17 +29,27 @@ export interface SystemViolationOverview {
   trafoPct: number;
 }
 
-function countCells(parsed: ParsedCsv, predicate: (v: number) => boolean) {
-  let total = 0;
-  let hits = 0;
-  for (const row of parsed.rows) {
-    for (const v of row) {
+/**
+ * Count how many columns (assets) have at least one finite value satisfying
+ * the predicate across all timestep rows.  Returns { violating, total }.
+ * Using a per-asset metric instead of per-cell so the dashboard percentage
+ * reflects "X% of buses/lines/trafos ever violated" rather than the tiny
+ * fraction of individual readings that breach the threshold.
+ */
+function countViolatingColumns(
+  parsed: ParsedCsv,
+  predicate: (v: number) => boolean,
+): { violating: number; total: number } {
+  const total = parsed.columns.length;
+  let violating = 0;
+  for (let c = 0; c < total; c++) {
+    for (const row of parsed.rows) {
+      const v = row[c];
       if (!Number.isFinite(v)) continue;
-      total++;
-      if (predicate(v)) hits++;
+      if (predicate(v)) { violating++; break; } // asset violated at least once
     }
   }
-  return { total, hits };
+  return { violating, total };
 }
 
 async function safeFetch(
@@ -66,23 +76,23 @@ export async function computeNetworkStats(
 
   const vmCounts = vm
     ? {
-        total: countCells(vm, () => true).total,
-        under: countCells(vm, (v) => v < V_LOWER).hits,
-        over: countCells(vm, (v) => v > V_UPPER).hits,
+        total: countViolatingColumns(vm, () => true).total,          // = number of buses
+        under: countViolatingColumns(vm, (v) => v < V_LOWER).violating,
+        over:  countViolatingColumns(vm, (v) => v > V_UPPER).violating,
       }
     : { total: 0, under: 0, over: 0 };
 
   const lineCounts = line
     ? {
-        total: countCells(line, () => true).total,
-        over: countCells(line, (v) => v > LOAD_LIMIT).hits,
+        total: countViolatingColumns(line, () => true).total,        // = number of lines
+        over:  countViolatingColumns(line, (v) => v > LOAD_LIMIT).violating,
       }
     : { total: 0, over: 0 };
 
   const trafoCounts = trafo
     ? {
-        total: countCells(trafo, () => true).total,
-        over: countCells(trafo, (v) => v > LOAD_LIMIT).hits,
+        total: countViolatingColumns(trafo, () => true).total,       // = number of trafos
+        over:  countViolatingColumns(trafo, (v) => v > LOAD_LIMIT).violating,
       }
     : { total: 0, over: 0 };
 
@@ -114,6 +124,9 @@ export function pickLatestRunPerNetwork(
   const latest = new Map<string, string>();
   for (const r of runs) {
     if (r.status !== "completed" || !r.networkId) continue;
+    // Power flow runs (pf_…) don't generate timeseries CSVs — skip them so
+    // they never shadow an older timeseries run that does have CSV results.
+    if (r.id.startsWith("pf_")) continue;
     const cur = latest.get(r.networkId);
     if (!cur || r.id > cur) latest.set(r.networkId, r.id);
   }
