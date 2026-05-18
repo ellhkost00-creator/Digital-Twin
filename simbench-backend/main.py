@@ -2150,8 +2150,9 @@ def estimate_node_flexibility(node_id: str, _cu: dict = Depends(get_current_user
     def _call(dev: dict):
         ip   = dev.get("agent_ip")
         port = dev.get("agent_port", 8765)
+        print(f"[flexibility] calling {dev['id']} at {ip}:{port}")
         if not ip:
-            raise ValueError(f"Agent IP unknown for {dev['id']} — re-register")
+            raise ValueError(f"Agent IP unknown for {dev['id']} — re-register the device")
         resp = _req.post(f"http://{ip}:{port}/flexibility", timeout=10)
         resp.raise_for_status()
         return dev["name"], resp.json()
@@ -2174,7 +2175,8 @@ def estimate_node_flexibility(node_id: str, _cu: dict = Depends(get_current_user
             except _req.exceptions.Timeout:
                 raise HTTPException(status_code=504, detail="An agent timed out")
             except Exception as exc:
-                raise HTTPException(status_code=502, detail=str(exc))
+                print(f"[flexibility] error: {type(exc).__name__}: {exc}")
+                raise HTTPException(status_code=502, detail=f"{type(exc).__name__}: {exc}")
 
     return {
         "node_id": node_id,
