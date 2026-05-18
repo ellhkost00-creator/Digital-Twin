@@ -21,12 +21,16 @@ from db import (
     save_validation_metrics, get_latest_validation,
     init_db, save_network, delete_network, save_run, delete_run, seed_networks_from_file,
     get_user_by_email, update_user_password, update_network_loads,
+    save_device, get_db_devices, save_telemetry, get_db_telemetry, mark_device_offline,
 )
 from auth_utils import (
     hash_password, verify_password, create_access_token,
     get_current_user, require_admin,
 )
-from fastapi import Depends, FastAPI, HTTPException
+import asyncio
+from collections import defaultdict, deque
+
+from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -56,6 +60,9 @@ async def lifespan(app: FastAPI):
         _dsl = _count_dss_loads(_nd)
         if _dsl > 0:
             update_network_loads(_nid, _dsl)
+    # Load persisted edge devices into in-memory registry.
+    for _dev in (get_db_devices() or []):
+        _devices[_dev["id"]] = _dev
     yield
 
 
@@ -72,6 +79,12 @@ app.add_middleware(
 DATA_FILE = Path("data/networks.json")
 PLOTS_DIR = Path("data/plots")
 RESULTS_DIR = Path("data/results")
+
+# ── Edge device in-memory state ───────────────────────────────────────────────
+# Works without PostgreSQL; DB is a persistence side-effect when available.
+_devices: dict[str, dict] = {}                                # device_id → info dict
+_telemetry: dict[str, deque] = defaultdict(lambda: deque(maxlen=100))  # device_id → readings
+_ws_subs: dict[str, set] = defaultdict(set)                  # device_id → active WebSockets
 
 # Path to the nando Nando_final directory (sibling of simbench-backend in the repo root)
 NANDO_ROOT = Path(__file__).parent.parent / "nando" / "Nando_final"
@@ -1928,3 +1941,106 @@ def get_result_column(network_id: str, run_id: str, kind: str, col_name: str, _c
         "column": col_name,
         "values": [round(v, 6) for v in df[col_name].tolist()],
     }
+
+
+# ── Edge device routes ────────────────────────────────────────────────────────
+
+class _DeviceRegisterRequest(BaseModel):
+    id: str
+    name: str
+    extra: dict | None = None
+
+
+class _DeviceTelemetryRequest(BaseModel):
+    device_id: str
+    readings: dict
+
+
+@app.get("/devices")
+def list_devices(_cu: dict = Depends(get_current_user)):
+    """Return all registered edge devices."""
+    return list(_devices.values())
+
+
+@app.post("/devices/register", status_code=200)
+def register_device(body: _DeviceRegisterRequest):
+    """Called by a device on boot to announce itself. No auth required."""
+    from datetime import datetime as _dt
+    now = _dt.utcnow().isoformat()
+    _devices[body.id] = {
+        "id": body.id,
+        "name": body.name,
+        "status": "online",
+        "last_seen": now,
+        "registered_at": _devices.get(body.id, {}).get("registered_at", now),
+        "extra": body.extra,
+    }
+    save_device(device_id=body.id, name=body.name, extra=body.extra)
+    return {"ok": True}
+
+
+@app.post("/devices/telemetry", status_code=200)
+async def post_telemetry(body: _DeviceTelemetryRequest):
+    """
+    Called by a device every few seconds to push a readings dict.
+    Fans out the payload to every subscribed browser WebSocket.
+    No auth required — devices may not have tokens.
+    """
+    from datetime import datetime as _dt
+    now = _dt.utcnow().isoformat()
+    snapshot = {"ts": now, "readings": body.readings}
+
+    # Update in-memory registry
+    if body.device_id in _devices:
+        _devices[body.device_id]["last_seen"] = now
+        _devices[body.device_id]["status"] = "online"
+    _telemetry[body.device_id].append(snapshot)
+
+    # Persist to DB (non-blocking side-effect)
+    save_telemetry(device_id=body.device_id, readings=body.readings)
+
+    # Fan out to subscribed WebSockets
+    dead: list = []
+    for ws in list(_ws_subs.get(body.device_id, set())):
+        try:
+            await ws.send_json(snapshot)
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        _ws_subs[body.device_id].discard(ws)
+
+    return {"ok": True}
+
+
+@app.get("/devices/{device_id}/telemetry")
+def get_device_telemetry(device_id: str, limit: int = 60,
+                         _cu: dict = Depends(get_current_user)):
+    """Return recent telemetry for a device (history preload)."""
+    # Try DB first; fall back to in-memory deque
+    db_rows = get_db_telemetry(device_id, limit)
+    if db_rows is not None:
+        return db_rows
+    rows = list(_telemetry.get(device_id, deque()))
+    return rows[-limit:] if len(rows) > limit else rows
+
+
+@app.websocket("/devices/{device_id}/stream")
+async def device_stream(websocket: WebSocket, device_id: str):
+    """Browser subscribes here for live telemetry from a specific device."""
+    await websocket.accept()
+    _ws_subs[device_id].add(websocket)
+    try:
+        # Send latest snapshot immediately so the UI isn't blank
+        latest = list(_telemetry.get(device_id, []))
+        if latest:
+            await websocket.send_json(latest[-1])
+        # Keep the connection alive; data arrives via post_telemetry fanout
+        while True:
+            await asyncio.sleep(30)
+            await websocket.send_json({"ping": True})
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        _ws_subs[device_id].discard(websocket)

@@ -83,6 +83,28 @@ class SimulationRun(Base):
     created_at                = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class EdgeDevice(Base):
+    """Registered edge device (Raspberry Pi, PLC, sensor node, …)."""
+    __tablename__ = "edge_devices"
+
+    id            = Column(String,  primary_key=True)
+    name          = Column(String,  nullable=False)
+    status        = Column(String,  default="online")   # online | offline
+    last_seen     = Column(DateTime, nullable=True)
+    registered_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    extra         = Column(JSON, nullable=True)
+
+
+class DeviceTelemetry(Base):
+    """One telemetry snapshot posted by an edge device."""
+    __tablename__ = "device_telemetry"
+
+    id        = Column(Integer, primary_key=True, autoincrement=True)
+    device_id = Column(String,  nullable=False, index=True)
+    ts        = Column(DateTime, nullable=False, default=datetime.utcnow)
+    readings  = Column(JSON, nullable=False)
+
+
 # ---------------------------------------------------------------------------
 # Connection bootstrap
 # ---------------------------------------------------------------------------
@@ -794,4 +816,105 @@ def seed_networks_from_file(data_file: Path) -> bool:
         return True
     except (OSError, SQLAlchemyError, Exception) as exc:
         logger.warning("Failed to seed networks from file: %s", exc)
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Edge device helpers
+# ---------------------------------------------------------------------------
+
+def save_device(*, device_id: str, name: str, extra: dict | None = None) -> bool:
+    """Upsert a device record and mark it online with current timestamp."""
+    if not db_available():
+        return False
+    try:
+        with _Session() as session:
+            row = session.get(EdgeDevice, device_id)
+            now = datetime.utcnow()
+            if row is None:
+                session.add(EdgeDevice(id=device_id, name=name, status="online",
+                                       last_seen=now, extra=extra))
+            else:
+                row.name = name
+                row.status = "online"
+                row.last_seen = now
+                if extra is not None:
+                    row.extra = extra
+            session.commit()
+        return True
+    except SQLAlchemyError as exc:
+        logger.warning("save_device failed: %s", exc)
+        return False
+
+
+def get_db_devices() -> list[dict] | None:
+    """Return all registered edge devices. None if DB unavailable."""
+    if not db_available():
+        return None
+    try:
+        with _Session() as session:
+            rows = session.query(EdgeDevice).order_by(EdgeDevice.registered_at).all()
+            return [
+                {
+                    "id": r.id,
+                    "name": r.name,
+                    "status": r.status,
+                    "last_seen": r.last_seen.isoformat() if r.last_seen else None,
+                    "registered_at": r.registered_at.isoformat() if r.registered_at else None,
+                    "extra": r.extra,
+                }
+                for r in rows
+            ]
+    except SQLAlchemyError as exc:
+        logger.warning("get_db_devices failed: %s", exc)
+        return None
+
+
+def save_telemetry(*, device_id: str, readings: dict) -> bool:
+    """Insert one telemetry row for the given device."""
+    if not db_available():
+        return False
+    try:
+        with _Session() as session:
+            session.add(DeviceTelemetry(device_id=device_id,
+                                        ts=datetime.utcnow(), readings=readings))
+            session.commit()
+        return True
+    except SQLAlchemyError as exc:
+        logger.warning("save_telemetry failed: %s", exc)
+        return False
+
+
+def get_db_telemetry(device_id: str, limit: int = 60) -> list[dict] | None:
+    """Return the last `limit` telemetry rows for a device. None if DB unavailable."""
+    if not db_available():
+        return None
+    try:
+        with _Session() as session:
+            rows = (
+                session.query(DeviceTelemetry)
+                .filter_by(device_id=device_id)
+                .order_by(DeviceTelemetry.ts.desc())
+                .limit(limit)
+                .all()
+            )
+            return [{"ts": r.ts.isoformat(), "readings": r.readings} for r in reversed(rows)]
+    except SQLAlchemyError as exc:
+        logger.warning("get_db_telemetry failed: %s", exc)
+        return None
+
+
+def mark_device_offline(device_id: str) -> bool:
+    """Set a device's status to offline."""
+    if not db_available():
+        return False
+    try:
+        with _Session() as session:
+            row = session.get(EdgeDevice, device_id)
+            if row:
+                row.status = "offline"
+                session.commit()
+        return True
+    except SQLAlchemyError as exc:
+        logger.warning("mark_device_offline failed: %s", exc)
         return False
