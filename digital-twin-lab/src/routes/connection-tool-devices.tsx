@@ -50,10 +50,10 @@ interface EdgeNode {
 }
 
 interface FlexibilityResult {
-  device_id: string;
+  node_id: string;
   timestamps: string[];
-  p_flexibility: { node_1: number[]; node_2: number[] };
-  q_flexibility: { node_1: number[]; node_2: number[] };
+  p_flexibility: Record<string, number[]>;
+  q_flexibility: Record<string, number[]>;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -63,16 +63,19 @@ function fmt(v: number | null | undefined, unit: string) {
   return `${v.toFixed(2)} ${unit}`;
 }
 
-function toChartData(
-  timestamps: string[],
-  series: { node_1: number[]; node_2: number[] },
-) {
+function toChartData(timestamps: string[], series: Record<string, number[]>) {
   return timestamps.map((t, i) => ({
     t,
-    "Node 1": series.node_1[i],
-    "Node 2": series.node_2[i],
+    ...Object.fromEntries(Object.entries(series).map(([k, v]) => [k, v[i]])),
   }));
 }
+
+const LINE_COLORS = [
+  "var(--primary)",
+  "oklch(0.6 0.2 250)",
+  "oklch(0.6 0.2 140)",
+  "oklch(0.6 0.2 30)",
+];
 
 // ── Pi row ────────────────────────────────────────────────────────────────────
 
@@ -112,10 +115,12 @@ function FlexChart({
   title,
   unit,
   data,
+  keys,
 }: {
   title: string;
   unit: string;
   data: ReturnType<typeof toChartData>;
+  keys: string[];
 }) {
   return (
     <div className="space-y-2">
@@ -127,20 +132,16 @@ function FlexChart({
           <YAxis unit={` ${unit}`} tick={{ fontSize: 11 }} width={52} />
           <Tooltip formatter={(v: number) => [`${v.toFixed(3)} ${unit}`]} />
           <Legend wrapperStyle={{ fontSize: 12 }} />
-          <Line
-            type="monotone"
-            dataKey="Node 1"
-            stroke="var(--primary)"
-            strokeWidth={2}
-            dot={false}
-          />
-          <Line
-            type="monotone"
-            dataKey="Node 2"
-            stroke="oklch(0.6 0.2 250)"
-            strokeWidth={2}
-            dot={false}
-          />
+          {keys.map((key, i) => (
+            <Line
+              key={key}
+              type="monotone"
+              dataKey={key}
+              stroke={LINE_COLORS[i % LINE_COLORS.length]}
+              strokeWidth={2}
+              dot={false}
+            />
+          ))}
         </LineChart>
       </ResponsiveContainer>
     </div>
@@ -157,8 +158,6 @@ function ConnectionToolDevicesPage() {
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) ?? null;
   const allActive = (selectedNode?.devices.length ?? 0) > 0 && (selectedNode?.devices.every((d) => d.active) ?? false);
-  // pick the first device to call the flexibility endpoint
-  const activeDeviceId = selectedNode?.devices[0]?.id ?? null;
 
   async function fetchNodes() {
     try {
@@ -181,12 +180,12 @@ function ConnectionToolDevicesPage() {
   }, [selectedNodeId]);
 
   async function handleEstimate() {
-    if (!activeDeviceId) return;
+    if (!selectedNodeId) return;
     setEstimating(true);
     setResult(null);
     try {
       const res = await apiFetch(
-        `${API_BASE}/devices/${activeDeviceId}/flexibility`,
+        `${API_BASE}/edge-nodes/${selectedNodeId}/flexibility`,
         { method: "POST" },
       );
       if (res.ok) setResult(await res.json());
@@ -307,10 +306,10 @@ function ConnectionToolDevicesPage() {
 
           {/* ── Right panel: charts ────────────────────────────────────── */}
           <div>
-            {pData && qData ? (
+            {pData && qData && result ? (
               <div className="space-y-8">
-                <FlexChart title="P Flexibility Potential" unit="kW" data={pData} />
-                <FlexChart title="Q Flexibility Potential" unit="kVAR" data={qData} />
+                <FlexChart title="P Flexibility Potential" unit="kW" data={pData} keys={Object.keys(result.p_flexibility)} />
+                <FlexChart title="Q Flexibility Potential" unit="kVAR" data={qData} keys={Object.keys(result.q_flexibility)} />
               </div>
             ) : (
               <div className="flex items-center justify-center rounded-lg border border-dashed border-border bg-muted/20 min-h-[260px]">

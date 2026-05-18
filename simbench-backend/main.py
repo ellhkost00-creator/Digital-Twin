@@ -2127,3 +2127,58 @@ def estimate_flexibility(device_id: str, _cu: dict = Depends(get_current_user)):
         raise HTTPException(status_code=504, detail="Agent timed out")
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Agent error: {exc}")
+
+
+@app.post("/edge-nodes/{node_id}/flexibility")
+def estimate_node_flexibility(node_id: str, _cu: dict = Depends(get_current_user)):
+    """
+    Call every device in the node, collect each one's flexibility series,
+    and return a combined response keyed by device name.
+    All devices must be reachable; raises 503 if any agent is down.
+    """
+    import requests as _req
+    from datetime import datetime as _dt
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    if node_id not in _edge_nodes:
+        raise HTTPException(status_code=404, detail="Edge node not found")
+
+    devices = [d for d in _devices.values() if d.get("node_id") == node_id]
+    if not devices:
+        raise HTTPException(status_code=404, detail="No devices in this node")
+
+    def _call(dev: dict):
+        ip   = dev.get("agent_ip")
+        port = dev.get("agent_port", 8765)
+        if not ip:
+            raise ValueError(f"Agent IP unknown for {dev['id']} — re-register")
+        resp = _req.post(f"http://{ip}:{port}/flexibility", timeout=10)
+        resp.raise_for_status()
+        return dev["name"], resp.json()
+
+    p_combined: dict[str, list] = {}
+    q_combined: dict[str, list] = {}
+    timestamps: list[str] = []
+
+    with ThreadPoolExecutor(max_workers=len(devices)) as pool:
+        futures = {pool.submit(_call, dev): dev for dev in devices}
+        for future in as_completed(futures):
+            try:
+                name, data = future.result()
+                p_combined[name] = data["p_flexibility"]
+                q_combined[name] = data["q_flexibility"]
+                if not timestamps:
+                    timestamps = data["timestamps"]
+            except _req.exceptions.ConnectionError as exc:
+                raise HTTPException(status_code=503, detail=f"Could not reach agent: {exc}")
+            except _req.exceptions.Timeout:
+                raise HTTPException(status_code=504, detail="An agent timed out")
+            except Exception as exc:
+                raise HTTPException(status_code=502, detail=str(exc))
+
+    return {
+        "node_id": node_id,
+        "timestamps": timestamps,
+        "p_flexibility": p_combined,
+        "q_flexibility": q_combined,
+    }

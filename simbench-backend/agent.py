@@ -52,8 +52,8 @@ def collect_readings() -> dict:
 
 def run_flexibility_script() -> dict:
     """
-    Dummy flexibility potential estimation.
-    Returns a 15-minute window (1-min steps) for P and Q across two network nodes.
+    Dummy flexibility potential for this device (15-min window, 1-min steps).
+    Replace with real measurements when ready.
     """
     steps = 15
     timestamps = [f"00:{str(m).zfill(2)}" for m in range(steps)]
@@ -69,14 +69,8 @@ def run_flexibility_script() -> dict:
         "window_minutes": steps,
         "step_minutes": 1,
         "timestamps": timestamps,
-        "p_flexibility": {
-            "node_1": series(base=2.5, amp=0.8, period=10, noise=0.05),
-            "node_2": series(base=1.8, amp=0.5, period=12, noise=0.04),
-        },
-        "q_flexibility": {
-            "node_1": series(base=1.0, amp=0.3, period=8,  noise=0.02),
-            "node_2": series(base=0.7, amp=0.2, period=10, noise=0.02),
-        },
+        "p_flexibility": series(base=2.5, amp=0.8, period=10, noise=0.05),
+        "q_flexibility": series(base=1.0, amp=0.3, period=8,  noise=0.02),
     }
 
 
