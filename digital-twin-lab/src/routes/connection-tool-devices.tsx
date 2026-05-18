@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
-import { Cable, RefreshCw } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Activity, RefreshCw, Zap } from "lucide-react";
 import { AppShell, PageHeader } from "@/components/app-shell";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,23 +10,22 @@ import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { apiFetch, API_BASE } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+  Legend,
+} from "recharts";
 
 export const Route = createFileRoute("/connection-tool-devices")({
   head: () => ({
     meta: [
       { title: "Connection with Tool Devices — DT Lab" },
-      {
-        name: "description",
-        content: "Connect external tool devices to your workspace.",
-      },
-      {
-        property: "og:title",
-        content: "Connection with Tool Devices — DT Lab",
-      },
-      {
-        property: "og:description",
-        content: "Connect external tool devices to your workspace.",
-      },
+      { name: "description", content: "Connect external tool devices to your workspace." },
     ],
   }),
   component: ConnectionToolDevicesPage,
@@ -34,264 +33,299 @@ export const Route = createFileRoute("/connection-tool-devices")({
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface EdgeDevice {
+interface PiDevice {
   id: string;
   name: string;
-  status: "online" | "offline";
+  node_id: string | null;
+  active: boolean;
+  power_p: number | null;
+  power_q: number | null;
   last_seen: string | null;
-  registered_at: string | null;
-  extra: Record<string, unknown> | null;
 }
 
-interface TelemetrySnapshot {
-  ts: string;
-  readings: Record<string, number>;
+interface EdgeNode {
+  id: string;
+  name: string;
+  devices: PiDevice[];
 }
 
-// ── Sparkline ─────────────────────────────────────────────────────────────────
+interface FlexibilityResult {
+  device_id: string;
+  timestamps: string[];
+  p_flexibility: { node_1: number[]; node_2: number[] };
+  q_flexibility: { node_1: number[]; node_2: number[] };
+}
 
-function Sparkline({ values }: { values: number[] }) {
-  if (values.length < 2) return null;
-  const W = 80, H = 28, pad = 2;
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-  const pts = values.map((v, i) => {
-    const x = pad + (i / (values.length - 1)) * (W - 2 * pad);
-    const y = H - pad - ((v - min) / range) * (H - 2 * pad);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  });
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function fmt(v: number | null | undefined, unit: string) {
+  if (v == null) return "—";
+  return `${v.toFixed(2)} ${unit}`;
+}
+
+function toChartData(
+  timestamps: string[],
+  series: { node_1: number[]; node_2: number[] },
+) {
+  return timestamps.map((t, i) => ({
+    t,
+    "Node 1": series.node_1[i],
+    "Node 2": series.node_2[i],
+  }));
+}
+
+// ── Pi row ────────────────────────────────────────────────────────────────────
+
+function PiRow({ pi }: { pi: PiDevice }) {
   return (
-    <svg width={W} height={H} className="opacity-70">
-      <polyline
-        points={pts.join(" ")}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-        strokeLinecap="round"
+    <div className="flex items-center gap-3 rounded-lg border border-border px-4 py-3">
+      <span
+        className={cn(
+          "h-2.5 w-2.5 shrink-0 rounded-full",
+          pi.active ? "bg-green-500" : "bg-muted-foreground/40",
+        )}
       />
-    </svg>
-  );
-}
-
-// ── MetricCard ────────────────────────────────────────────────────────────────
-
-function MetricCard({ label, history }: { label: string; history: number[] }) {
-  const latest = history.at(-1);
-  const display = latest !== undefined
-    ? (Number.isInteger(latest) ? latest : latest.toFixed(2))
-    : "—";
-
-  return (
-    <div className="rounded-lg border border-border bg-muted/20 p-3 flex flex-col gap-1">
-      <div className="text-xs text-muted-foreground truncate">{label}</div>
-      <div className="text-xl font-semibold tabular-nums">{display}</div>
-      <Sparkline values={history.slice(-20)} />
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-medium truncate">{pi.name}</div>
+        <div className="text-xs text-muted-foreground">{pi.id}</div>
+      </div>
+      <div className="text-right shrink-0 space-y-0.5">
+        <div className="text-xs tabular-nums">
+          <span className="text-muted-foreground">P </span>
+          <span className="font-medium">{fmt(pi.power_p, "kW")}</span>
+        </div>
+        <div className="text-xs tabular-nums">
+          <span className="text-muted-foreground">Q </span>
+          <span className="font-medium">{fmt(pi.power_q, "kVAR")}</span>
+        </div>
+      </div>
+      <Badge variant={pi.active ? "default" : "secondary"} className="text-xs shrink-0">
+        {pi.active ? "Active" : "Offline"}
+      </Badge>
     </div>
   );
 }
 
-// ── Edge Devices Section ──────────────────────────────────────────────────────
+// ── Flexibility chart ─────────────────────────────────────────────────────────
 
-type WsStatus = "idle" | "connecting" | "live" | "disconnected";
+function FlexChart({
+  title,
+  unit,
+  data,
+}: {
+  title: string;
+  unit: string;
+  data: ReturnType<typeof toChartData>;
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="text-sm font-semibold">{title}</div>
+      <ResponsiveContainer width="100%" height={200}>
+        <LineChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+          <XAxis dataKey="t" tick={{ fontSize: 11 }} />
+          <YAxis unit={` ${unit}`} tick={{ fontSize: 11 }} width={52} />
+          <Tooltip formatter={(v: number) => [`${v.toFixed(3)} ${unit}`]} />
+          <Legend wrapperStyle={{ fontSize: 12 }} />
+          <Line
+            type="monotone"
+            dataKey="Node 1"
+            stroke="var(--primary)"
+            strokeWidth={2}
+            dot={false}
+          />
+          <Line
+            type="monotone"
+            dataKey="Node 2"
+            stroke="oklch(0.6 0.2 250)"
+            strokeWidth={2}
+            dot={false}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
 
-function EdgeDevicesCard() {
-  const [devices, setDevices] = useState<EdgeDevice[]>([]);
-  const [selectedId, setSelectedId] = useState<string>("");
-  const [wsStatus, setWsStatus] = useState<WsStatus>("idle");
-  const [metrics, setMetrics] = useState<Record<string, number[]>>({});
-  const [lastSeen, setLastSeen] = useState<string | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
+// ── Main page ─────────────────────────────────────────────────────────────────
 
-  // ── Fetch device list ────────────────────────────────────────────────────
-  async function fetchDevices() {
+function ConnectionToolDevicesPage() {
+  const [nodes, setNodes] = useState<EdgeNode[]>([]);
+  const [selectedNodeId, setSelectedNodeId] = useState<string>("");
+  const [estimating, setEstimating] = useState(false);
+  const [result, setResult] = useState<FlexibilityResult | null>(null);
+
+  const selectedNode = nodes.find((n) => n.id === selectedNodeId) ?? null;
+  const allActive = (selectedNode?.devices.length ?? 0) > 0 && (selectedNode?.devices.every((d) => d.active) ?? false);
+  // pick the first device to call the flexibility endpoint
+  const activeDeviceId = selectedNode?.devices[0]?.id ?? null;
+
+  async function fetchNodes() {
     try {
-      const res = await apiFetch(`${API_BASE}/devices`);
-      if (res.ok) {
-        const data: EdgeDevice[] = await res.json();
-        setDevices(data);
-      }
+      const res = await apiFetch(`${API_BASE}/edge-nodes`);
+      if (res.ok) setNodes(await res.json());
     } catch {
-      // silently ignore network errors
+      // silently ignore
     }
   }
 
   useEffect(() => {
-    fetchDevices();
-    const id = setInterval(fetchDevices, 15_000);
+    fetchNodes();
+    const id = setInterval(fetchNodes, 15_000);
     return () => clearInterval(id);
   }, []);
 
-  // ── Load history + open WebSocket when device is selected ────────────────
+  // Reset result when node changes
   useEffect(() => {
-    // Close previous connection
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
+    setResult(null);
+  }, [selectedNodeId]);
+
+  async function handleEstimate() {
+    if (!activeDeviceId) return;
+    setEstimating(true);
+    setResult(null);
+    try {
+      const res = await apiFetch(
+        `${API_BASE}/devices/${activeDeviceId}/flexibility`,
+        { method: "POST" },
+      );
+      if (res.ok) setResult(await res.json());
+    } catch {
+      // error handled silently; user can retry
+    } finally {
+      setEstimating(false);
     }
-    setMetrics({});
-    setLastSeen(null);
+  }
 
-    if (!selectedId) {
-      setWsStatus("idle");
-      return;
-    }
+  const pData = result
+    ? toChartData(result.timestamps, result.p_flexibility)
+    : null;
+  const qData = result
+    ? toChartData(result.timestamps, result.q_flexibility)
+    : null;
 
-    // Preload history
-    apiFetch(`${API_BASE}/devices/${selectedId}/telemetry?limit=60`)
-      .then((r) => r.ok ? r.json() : [])
-      .then((rows: TelemetrySnapshot[]) => {
-        const acc: Record<string, number[]> = {};
-        for (const row of rows) {
-          for (const [k, v] of Object.entries(row.readings)) {
-            if (!acc[k]) acc[k] = [];
-            acc[k].push(v);
-          }
-        }
-        setMetrics(acc);
-        if (rows.length) setLastSeen(rows.at(-1)!.ts);
-      })
-      .catch(() => {});
-
-    // Open WebSocket
-    setWsStatus("connecting");
-    const wsUrl = API_BASE.replace(/^http/, "ws");
-    const ws = new WebSocket(`${wsUrl}/devices/${selectedId}/stream`);
-    wsRef.current = ws;
-
-    ws.onopen = () => setWsStatus("live");
-    ws.onclose = () => setWsStatus("disconnected");
-    ws.onerror = () => setWsStatus("disconnected");
-    ws.onmessage = (evt) => {
-      try {
-        const snapshot: TelemetrySnapshot & { ping?: boolean } = JSON.parse(evt.data);
-        if (snapshot.ping) return;
-        setLastSeen(snapshot.ts);
-        setMetrics((prev) => {
-          const next = { ...prev };
-          for (const [k, v] of Object.entries(snapshot.readings)) {
-            next[k] = [...(prev[k] ?? []).slice(-99), v];
-          }
-          return next;
-        });
-      } catch {
-        // ignore malformed frames
-      }
-    };
-
-    return () => {
-      ws.close();
-    };
-  }, [selectedId]);
-
-  const statusBadge: Record<WsStatus, { label: string; variant: "default" | "secondary" | "destructive" | "outline" }> = {
-    idle:         { label: "No device",    variant: "outline" },
-    connecting:   { label: "Connecting…",  variant: "secondary" },
-    live:         { label: "Live",         variant: "default" },
-    disconnected: { label: "Disconnected", variant: "destructive" },
-  };
-  const badge = statusBadge[wsStatus];
-  const metricKeys = Object.keys(metrics);
-
-  return (
-    <Card className="p-6">
-      {/* Header */}
-      <div className="flex items-center gap-3 mb-1">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
-          <Cable className="h-4 w-4" />
-        </div>
-        <div>
-          <div className="text-sm font-semibold">Edge Devices</div>
-          <div className="text-xs text-muted-foreground">Live telemetry from Raspberry Pi, PLCs &amp; sensors</div>
-        </div>
-      </div>
-
-      <Separator className="my-5" />
-
-      <div className="grid gap-6 lg:grid-cols-[260px_1fr] lg:items-start">
-        {/* Left: device selector */}
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <Label>Select device</Label>
-            <div className="flex gap-2">
-              <Select value={selectedId} onValueChange={setSelectedId}>
-                <SelectTrigger className="flex-1">
-                  <SelectValue placeholder={devices.length === 0 ? "No devices registered" : "Choose a device…"} />
-                </SelectTrigger>
-                <SelectContent>
-                  {devices.map((d) => (
-                    <SelectItem key={d.id} value={d.id}>
-                      <span className="flex items-center gap-2">
-                        <span
-                          className={cn(
-                            "inline-block h-2 w-2 rounded-full",
-                            d.status === "online" ? "bg-green-500" : "bg-muted-foreground",
-                          )}
-                        />
-                        {d.name}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Button size="icon" variant="outline" onClick={fetchDevices} title="Refresh device list">
-                <RefreshCw className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-
-          {selectedId && (
-            <div className="space-y-1 text-xs text-muted-foreground">
-              <div className="flex items-center gap-2">
-                <span>Stream:</span>
-                <Badge variant={badge.variant} className="text-xs py-0">{badge.label}</Badge>
-              </div>
-              {lastSeen && (
-                <div>Last reading: {new Date(lastSeen).toLocaleTimeString()}</div>
-              )}
-            </div>
-          )}
-
-          {devices.length === 0 && (
-            <p className="text-xs text-muted-foreground border border-dashed rounded-md p-3">
-              No devices yet. Run <code className="font-mono">agent.py</code> on your Pi to register it.
-            </p>
-          )}
-        </div>
-
-        {/* Right: live metric cards */}
-        {metricKeys.length > 0 ? (
-          <div className="grid gap-3 grid-cols-2 sm:grid-cols-3">
-            {metricKeys.map((key) => (
-              <MetricCard key={key} label={key} history={metrics[key]} />
-            ))}
-          </div>
-        ) : (
-          <div className="flex items-center justify-center rounded-lg border border-dashed border-border bg-muted/20 min-h-[160px]">
-            <p className="text-sm text-muted-foreground text-center px-6">
-              {selectedId
-                ? wsStatus === "connecting"
-                  ? "Connecting to device…"
-                  : "Waiting for telemetry…"
-                : "Select a device to view live data."}
-            </p>
-          </div>
-        )}
-      </div>
-    </Card>
-  );
-}
-
-// ── Page ─────────────────────────────────────────────────────────────────────
-function ConnectionToolDevicesPage() {
   return (
     <AppShell>
       <PageHeader
         title="Connection with Tool Devices"
-        description="Manage connections between DT Lab and external hardware/software tools."
+        description="Monitor edge nodes and estimate flexibility potential."
       />
-      <EdgeDevicesCard />
+
+      <Card className="p-6">
+        {/* Header */}
+        <div className="flex items-center gap-3 mb-1">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+            <Activity className="h-4 w-4" />
+          </div>
+          <div>
+            <div className="text-sm font-semibold">Edge Nodes</div>
+            <div className="text-xs text-muted-foreground">
+              Select a node to view its Raspberry Pi devices and estimate flexibility
+            </div>
+          </div>
+        </div>
+
+        <Separator className="my-5" />
+
+        <div className="grid gap-8 lg:grid-cols-[280px_1fr] lg:items-start">
+          {/* ── Left panel ─────────────────────────────────────────────── */}
+          <div className="space-y-4">
+            {/* Node selector */}
+            <div className="space-y-2">
+              <Label>Select Edge Node</Label>
+              <div className="flex gap-2">
+                <Select value={selectedNodeId} onValueChange={setSelectedNodeId}>
+                  <SelectTrigger className="flex-1">
+                    <SelectValue
+                      placeholder={
+                        nodes.length === 0 ? "No nodes registered" : "Choose a node…"
+                      }
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {nodes.map((n) => (
+                      <SelectItem key={n.id} value={n.id}>
+                        {n.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  size="icon"
+                  variant="outline"
+                  onClick={fetchNodes}
+                  title="Refresh"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+
+            {/* Pi list */}
+            {selectedNode && selectedNode.devices.length > 0 && (
+              <div className="space-y-2">
+                <Label>Raspberry Pi Devices</Label>
+                <div className="space-y-2">
+                  {selectedNode.devices.map((pi) => (
+                    <PiRow key={pi.id} pi={pi} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {selectedNode && selectedNode.devices.length === 0 && (
+              <p className="text-xs text-muted-foreground border border-dashed rounded-md p-3">
+                No devices registered in this node yet.
+              </p>
+            )}
+
+            {!selectedNodeId && nodes.length === 0 && (
+              <p className="text-xs text-muted-foreground border border-dashed rounded-md p-3">
+                No nodes yet. Run <code className="font-mono">agent.py</code> with{" "}
+                <code className="font-mono">--node</code> to register one.
+              </p>
+            )}
+
+            {/* Estimate button */}
+            {selectedNode && (
+              <Button
+                className="w-full"
+                disabled={!allActive || estimating}
+                onClick={handleEstimate}
+              >
+                <Zap className="h-4 w-4 mr-2" />
+                {estimating ? "Estimating…" : "Estimate Flexibility Potential"}
+              </Button>
+            )}
+
+            {selectedNode && !allActive && (
+              <p className="text-xs text-muted-foreground text-center">
+                All devices must be active to enable estimation.
+              </p>
+            )}
+          </div>
+
+          {/* ── Right panel: charts ────────────────────────────────────── */}
+          <div>
+            {pData && qData ? (
+              <div className="space-y-8">
+                <FlexChart title="P Flexibility Potential" unit="kW" data={pData} />
+                <FlexChart title="Q Flexibility Potential" unit="kVAR" data={qData} />
+              </div>
+            ) : (
+              <div className="flex items-center justify-center rounded-lg border border-dashed border-border bg-muted/20 min-h-[260px]">
+                <p className="text-sm text-muted-foreground text-center px-6">
+                  {selectedNode
+                    ? allActive
+                      ? "Press \"Estimate Flexibility Potential\" to see results."
+                      : "All devices must be active to run the estimation."
+                    : "Select an Edge Node to get started."}
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      </Card>
     </AppShell>
   );
 }

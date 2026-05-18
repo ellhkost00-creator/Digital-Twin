@@ -22,6 +22,7 @@ from db import (
     init_db, save_network, delete_network, save_run, delete_run, seed_networks_from_file,
     get_user_by_email, update_user_password, update_network_loads,
     save_device, get_db_devices, save_telemetry, get_db_telemetry, mark_device_offline,
+    save_edge_node, get_db_edge_nodes,
 )
 from auth_utils import (
     hash_password, verify_password, create_access_token,
@@ -30,7 +31,7 @@ from auth_utils import (
 import asyncio
 from collections import defaultdict, deque
 
-from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -60,9 +61,11 @@ async def lifespan(app: FastAPI):
         _dsl = _count_dss_loads(_nd)
         if _dsl > 0:
             update_network_loads(_nid, _dsl)
-    # Load persisted edge devices into in-memory registry.
+    # Load persisted edge devices and nodes into in-memory registry.
     for _dev in (get_db_devices() or []):
         _devices[_dev["id"]] = _dev
+    for _node in (get_db_edge_nodes() or []):
+        _edge_nodes[_node["id"]] = _node
     yield
 
 
@@ -83,6 +86,7 @@ RESULTS_DIR = Path("data/results")
 # ── Edge device in-memory state ───────────────────────────────────────────────
 # Works without PostgreSQL; DB is a persistence side-effect when available.
 _devices: dict[str, dict] = {}                                # device_id → info dict
+_edge_nodes: dict[str, dict] = {}                             # node_id → {id, name}
 _telemetry: dict[str, deque] = defaultdict(lambda: deque(maxlen=100))  # device_id → readings
 _ws_subs: dict[str, set] = defaultdict(set)                  # device_id → active WebSockets
 
@@ -1948,6 +1952,7 @@ def get_result_column(network_id: str, run_id: str, kind: str, col_name: str, _c
 class _DeviceRegisterRequest(BaseModel):
     id: str
     name: str
+    node_id: str | None = None
     extra: dict | None = None
 
 
@@ -1963,19 +1968,27 @@ def list_devices(_cu: dict = Depends(get_current_user)):
 
 
 @app.post("/devices/register", status_code=200)
-def register_device(body: _DeviceRegisterRequest):
+def register_device(body: _DeviceRegisterRequest, request: Request):
     """Called by a device on boot to announce itself. No auth required."""
     from datetime import datetime as _dt
     now = _dt.utcnow().isoformat()
+    agent_ip = request.client.host if request.client else None
     _devices[body.id] = {
         "id": body.id,
         "name": body.name,
+        "node_id": body.node_id,
         "status": "online",
         "last_seen": now,
         "registered_at": _devices.get(body.id, {}).get("registered_at", now),
+        "agent_ip": agent_ip,
+        "agent_port": body.extra.get("agent_port", 8765) if body.extra else 8765,
         "extra": body.extra,
     }
-    save_device(device_id=body.id, name=body.name, extra=body.extra)
+    # Auto-create the node in memory if it's new
+    if body.node_id and body.node_id not in _edge_nodes:
+        _edge_nodes[body.node_id] = {"id": body.node_id, "name": body.node_id}
+        save_edge_node(node_id=body.node_id, name=body.node_id)
+    save_device(device_id=body.id, name=body.name, node_id=body.node_id, extra=body.extra)
     return {"ok": True}
 
 
@@ -2044,3 +2057,73 @@ async def device_stream(websocket: WebSocket, device_id: str):
         pass
     finally:
         _ws_subs[device_id].discard(websocket)
+
+
+# ── Edge node routes ──────────────────────────────────────────────────────────
+
+@app.get("/edge-nodes")
+def list_edge_nodes(_cu: dict = Depends(get_current_user)):
+    """Return all edge nodes, each with their devices and latest P/Q readings."""
+    from datetime import datetime as _dt, timezone as _tz
+
+    result = []
+    for node in _edge_nodes.values():
+        devices = []
+        for dev in _devices.values():
+            if dev.get("node_id") != node["id"]:
+                continue
+            # Determine active status: last_seen within 60 seconds
+            last_seen_str = dev.get("last_seen")
+            active = False
+            if last_seen_str:
+                try:
+                    last_seen_dt = _dt.fromisoformat(last_seen_str)
+                    age = (_dt.utcnow() - last_seen_dt).total_seconds()
+                    active = age < 60
+                except ValueError:
+                    pass
+
+            # Latest P/Q from telemetry
+            latest = list(_telemetry.get(dev["id"], []))
+            readings = latest[-1]["readings"] if latest else {}
+            devices.append({
+                **dev,
+                "active": active,
+                "power_p": readings.get("power_p"),
+                "power_q": readings.get("power_q"),
+            })
+        result.append({**node, "devices": devices})
+    return result
+
+
+@app.post("/devices/{device_id}/flexibility")
+def estimate_flexibility(device_id: str, _cu: dict = Depends(get_current_user)):
+    """
+    Ask the agent running on the device to compute flexibility potential.
+    The agent exposes a small HTTP server on port 8765 with a /flexibility endpoint.
+    For real hardware, replace the dummy script inside the agent with actual measurements.
+    """
+    import requests as _req
+
+    device = _devices.get(device_id)
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    agent_ip   = device.get("agent_ip")
+    agent_port = device.get("agent_port", 8765)
+
+    if not agent_ip:
+        raise HTTPException(status_code=503, detail="Agent IP unknown — re-register the device")
+
+    try:
+        resp = _req.post(f"http://{agent_ip}:{agent_port}/flexibility", timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        data["device_id"] = device_id   # ensure it's always present
+        return data
+    except _req.exceptions.ConnectionError:
+        raise HTTPException(status_code=503, detail="Could not reach agent — is it running?")
+    except _req.exceptions.Timeout:
+        raise HTTPException(status_code=504, detail="Agent timed out")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Agent error: {exc}")

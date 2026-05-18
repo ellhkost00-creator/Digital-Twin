@@ -83,12 +83,22 @@ class SimulationRun(Base):
     created_at                = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class EdgeNode(Base):
+    """Logical grouping of edge devices (e.g. a substation or field cabinet)."""
+    __tablename__ = "edge_nodes"
+
+    id         = Column(String,  primary_key=True)
+    name       = Column(String,  nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class EdgeDevice(Base):
     """Registered edge device (Raspberry Pi, PLC, sensor node, …)."""
     __tablename__ = "edge_devices"
 
     id            = Column(String,  primary_key=True)
     name          = Column(String,  nullable=False)
+    node_id       = Column(String,  nullable=True)       # belongs to which EdgeNode
     status        = Column(String,  default="online")   # online | offline
     last_seen     = Column(DateTime, nullable=True)
     registered_at = Column(DateTime, nullable=False, default=datetime.utcnow)
@@ -139,8 +149,12 @@ def init_db() -> bool:
                     "ALTER TABLE simulation_runs "
                     "ADD COLUMN IF NOT EXISTS created_by VARCHAR"
                 ))
+                conn.execute(text(
+                    "ALTER TABLE edge_devices "
+                    "ADD COLUMN IF NOT EXISTS node_id VARCHAR"
+                ))
                 conn.commit()
-            logger.info("Schema migration: hashed_password + created_by columns ensured")
+            logger.info("Schema migration: hashed_password + created_by + node_id columns ensured")
         except Exception as mig_exc:
             logger.warning("Schema migration skipped (non-fatal): %s", mig_exc)
         logger.info("PostgreSQL connected and schema ready")
@@ -823,7 +837,8 @@ def seed_networks_from_file(data_file: Path) -> bool:
 # Edge device helpers
 # ---------------------------------------------------------------------------
 
-def save_device(*, device_id: str, name: str, extra: dict | None = None) -> bool:
+def save_device(*, device_id: str, name: str, node_id: str | None = None,
+                extra: dict | None = None) -> bool:
     """Upsert a device record and mark it online with current timestamp."""
     if not db_available():
         return False
@@ -832,12 +847,14 @@ def save_device(*, device_id: str, name: str, extra: dict | None = None) -> bool
             row = session.get(EdgeDevice, device_id)
             now = datetime.utcnow()
             if row is None:
-                session.add(EdgeDevice(id=device_id, name=name, status="online",
-                                       last_seen=now, extra=extra))
+                session.add(EdgeDevice(id=device_id, name=name, node_id=node_id,
+                                       status="online", last_seen=now, extra=extra))
             else:
                 row.name = name
                 row.status = "online"
                 row.last_seen = now
+                if node_id is not None:
+                    row.node_id = node_id
                 if extra is not None:
                     row.extra = extra
             session.commit()
@@ -858,6 +875,7 @@ def get_db_devices() -> list[dict] | None:
                 {
                     "id": r.id,
                     "name": r.name,
+                    "node_id": r.node_id,
                     "status": r.status,
                     "last_seen": r.last_seen.isoformat() if r.last_seen else None,
                     "registered_at": r.registered_at.isoformat() if r.registered_at else None,
@@ -918,3 +936,45 @@ def mark_device_offline(device_id: str) -> bool:
     except SQLAlchemyError as exc:
         logger.warning("mark_device_offline failed: %s", exc)
         return False
+
+
+# ---------------------------------------------------------------------------
+# Edge node helpers
+# ---------------------------------------------------------------------------
+
+def save_edge_node(*, node_id: str, name: str) -> bool:
+    """Upsert an edge node record."""
+    if not db_available():
+        return False
+    try:
+        with _Session() as session:
+            row = session.get(EdgeNode, node_id)
+            if row is None:
+                session.add(EdgeNode(id=node_id, name=name))
+            else:
+                row.name = name
+            session.commit()
+        return True
+    except SQLAlchemyError as exc:
+        logger.warning("save_edge_node failed: %s", exc)
+        return False
+
+
+def get_db_edge_nodes() -> list[dict] | None:
+    """Return all edge nodes. None if DB unavailable."""
+    if not db_available():
+        return None
+    try:
+        with _Session() as session:
+            rows = session.query(EdgeNode).order_by(EdgeNode.created_at).all()
+            return [
+                {
+                    "id": r.id,
+                    "name": r.name,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                }
+                for r in rows
+            ]
+    except SQLAlchemyError as exc:
+        logger.warning("get_db_edge_nodes failed: %s", exc)
+        return None

@@ -1,6 +1,6 @@
 simbench-backend/data/results/
 nando/Nando_final/results/
-
+.claude/
 
 **/node_modules/
 **/.venv/
