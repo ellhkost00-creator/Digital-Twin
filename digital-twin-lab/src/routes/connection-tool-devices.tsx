@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useLocation } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Activity, RefreshCw, Zap } from "lucide-react";
 import { AppShell, PageHeader } from "@/components/app-shell";
@@ -156,6 +156,9 @@ function ConnectionToolDevicesPage() {
   const [estimating, setEstimating] = useState(false);
   const [result, setResult] = useState<FlexibilityResult | null>(null);
 
+  const location = useLocation();
+  const isActive = location.pathname === "/connection-tool-devices";
+
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) ?? null;
   const allActive = (selectedNode?.devices.length ?? 0) > 0 && (selectedNode?.devices.every((d) => d.active) ?? false);
 
@@ -169,10 +172,11 @@ function ConnectionToolDevicesPage() {
   }
 
   useEffect(() => {
+    if (!isActive) return;
     fetchNodes();
     const id = setInterval(fetchNodes, 15_000);
     return () => clearInterval(id);
-  }, []);
+  }, [isActive]);
 
   // Reset result when node changes
   useEffect(() => {

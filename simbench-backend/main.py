@@ -2079,7 +2079,7 @@ def list_edge_nodes(_cu: dict = Depends(get_current_user)):
                 try:
                     last_seen_dt = _dt.fromisoformat(last_seen_str)
                     age = (_dt.utcnow() - last_seen_dt).total_seconds()
-                    active = age < 60
+                    active = age < 10
                 except ValueError:
                     pass
 
