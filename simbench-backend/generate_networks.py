@@ -71,7 +71,7 @@ def compute_min_height(fig, min_px: int = 500, max_px: int = 3000) -> int:
         return min_px
 
 
-def build_plot_html(fig, code: str, min_height: int = 500, modebar_side: str = "left") -> str:
+def build_plot_html(fig, code: str, min_height: int = 500, modebar_side: str = "left", hide_modebar: bool = False) -> str:
     """Wrap the Plotly figure in a branded, fully responsive HTML shell.
 
     modebar_side: "left"  → modebar sits at top-left (default, for timeseries / topology plots)
@@ -84,7 +84,7 @@ def build_plot_html(fig, code: str, min_height: int = 500, modebar_side: str = "
         include_plotlyjs="cdn",
         config={
             "responsive":             True,
-            "displayModeBar":         True,
+            "displayModeBar":         not hide_modebar,
             "scrollZoom":             True,
             "modeBarButtonsToRemove": ["lasso2d", "select2d"],
             "displaylogo":            False,

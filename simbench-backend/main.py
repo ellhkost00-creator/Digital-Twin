@@ -2132,15 +2132,28 @@ def estimate_flexibility(device_id: str, _cu: dict = Depends(get_current_user)):
         raise HTTPException(status_code=502, detail=f"Agent error: {exc}")
 
 
+def _minkowski_sum(v1: list, v2: list) -> list:
+    """
+    Compute the Minkowski sum of two convex polygons given as vertex lists [[p,q], ...].
+    Returns vertices of the resulting polygon sorted by angle.
+    """
+    import numpy as np
+    from scipy.spatial import ConvexHull
+    pts = np.array([[a[0] + b[0], a[1] + b[1]] for a in v1 for b in v2])
+    hull = ConvexHull(pts)
+    verts = pts[hull.vertices]
+    center = verts.mean(axis=0)
+    angles = np.arctan2(verts[:, 1] - center[1], verts[:, 0] - center[0])
+    return verts[np.argsort(angles)].tolist()
+
+
 @app.post("/edge-nodes/{node_id}/flexibility")
 def estimate_node_flexibility(node_id: str, _cu: dict = Depends(get_current_user)):
     """
-    Call every device in the node, collect each one's flexibility series,
-    and return a combined response keyed by device name.
-    All devices must be reachable; raises 503 if any agent is down.
+    Call every device in the node, collect each one's polytope series,
+    and return the Minkowski sum across devices as a single combined FOR per time step.
     """
     import requests as _req
-    from datetime import datetime as _dt
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     if node_id not in _edge_nodes:
@@ -2158,21 +2171,23 @@ def estimate_node_flexibility(node_id: str, _cu: dict = Depends(get_current_user
             raise ValueError(f"Agent IP unknown for {dev['id']} — re-register the device")
         resp = _req.post(f"http://{ip}:{port}/flexibility", timeout=10)
         resp.raise_for_status()
-        return dev["name"], resp.json()
+        return resp.json()
 
-    p_combined: dict[str, list] = {}
-    q_combined: dict[str, list] = {}
+    # Collect individual polytopes per device, then compute combined (Minkowski sum)
+    device_polytopes: dict[str, list] = {}   # name → [vertices per step]
     timestamps: list[str] = []
 
     with ThreadPoolExecutor(max_workers=len(devices)) as pool:
         futures = {pool.submit(_call, dev): dev for dev in devices}
         for future in as_completed(futures):
+            dev = futures[future]
             try:
-                name, data = future.result()
-                p_combined[name] = data["p_flexibility"]
-                q_combined[name] = data["q_flexibility"]
+                data = future.result()
                 if not timestamps:
                     timestamps = data["timestamps"]
+                device_polytopes[dev["name"]] = [
+                    step["vertices"] for step in data["polytopes"]
+                ]
             except _req.exceptions.ConnectionError as exc:
                 raise HTTPException(status_code=503, detail=f"Could not reach agent: {exc}")
             except _req.exceptions.Timeout:
@@ -2181,11 +2196,22 @@ def estimate_node_flexibility(node_id: str, _cu: dict = Depends(get_current_user
                 print(f"[flexibility] error: {type(exc).__name__}: {exc}")
                 raise HTTPException(status_code=502, detail=f"{type(exc).__name__}: {exc}")
 
+    # Compute combined FOR (Minkowski sum across all devices per time step)
+    combined: list = []
+    for i in range(len(timestamps)):
+        verts = None
+        for name_verts in device_polytopes.values():
+            verts = name_verts[i] if verts is None else _minkowski_sum(verts, name_verts[i])
+        combined.append(verts)
+
+    def to_steps(verts_list: list) -> list:
+        return [{"t": ts, "vertices": v} for ts, v in zip(timestamps, verts_list)]
+
     return {
         "node_id": node_id,
         "timestamps": timestamps,
-        "p_flexibility": p_combined,
-        "q_flexibility": q_combined,
+        "devices": {name: to_steps(vl) for name, vl in device_polytopes.items()},
+        "combined": to_steps(combined),
     }
 
 
@@ -2225,11 +2251,11 @@ def get_node_topology(node_id: str, _cu: dict = Depends(get_current_user)):
         x=[tx], y=[ty],
         mode="markers+text",
         name="Edge Node",
-        marker=dict(color="#f59e0b", size=22, symbol="star",
+        marker=dict(color="#f59e0b", size=22, symbol="triangle-up",
                     line=dict(color="#ffffff", width=2)),
         text=["Edge Node"],
-        textposition="top center",
-        textfont=dict(size=11, color="#000000"),
+        textposition="middle right",
+        textfont=dict(size=11, color="#f59e0b"),
         hoverinfo="name",
     ))
 
@@ -2260,9 +2286,9 @@ def get_node_topology(node_id: str, _cu: dict = Depends(get_current_user)):
     )
 
     # ── Write HTML and return URL ─────────────────────────────────────────────
-    html = build_plot_html(fig, _TOPO_NETWORK)
+    html = build_plot_html(fig, _TOPO_NETWORK, hide_modebar=True)
     PLOTS_DIR.mkdir(parents=True, exist_ok=True)
     out_path = PLOTS_DIR / f"topo-{node_id}.html"
     out_path.write_text(html, encoding="utf-8")
 
-    return {"url": f"/plots/topo-{node_id}.html"}
+    return {"url": f"/plots/topo-{node_id}.html", "network": _TOPO_NETWORK}

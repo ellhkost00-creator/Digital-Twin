@@ -30,6 +30,7 @@ INTERVAL = 5
 MAX_BACKOFF = 60
 
 _tick = 0
+_device_id = ""   # set in main() before starting the HTTP server
 
 
 # ── Telemetry ─────────────────────────────────────────────────────────────────
@@ -50,27 +51,45 @@ def collect_readings() -> dict:
 # ── Flexibility estimation script ─────────────────────────────────────────────
 # Replace this function with real measurements when deploying on actual hardware.
 
-def run_flexibility_script() -> dict:
+def run_flexibility_script(device_id: str = "") -> dict:
     """
-    Dummy flexibility potential for this device (15-min window, 1-min steps).
-    Replace with real measurements when ready.
+    Dummy Flexibility Operating Region (FOR) for this device.
+    Parameters are derived from the device ID so each Pi produces a distinct shape.
+    Replace with real measurements when deploying on actual hardware.
     """
+    # Derive stable per-device parameters from the ID
+    seed = sum(ord(c) for c in device_id)
+    rng = random.Random(seed)
+
     steps = 15
+    k = 10
+    P_C = rng.uniform(1.5, 3.5)   # centre shifts per device
+    Q_C = rng.uniform(-0.3, 0.3)
+    P_R = rng.uniform(0.8, 1.4)   # radius differs per device
+    Q_R = rng.uniform(0.5, 1.0)
+    p_phase = rng.uniform(0, math.pi)   # time-variation phase differs too
+    q_phase = rng.uniform(0, math.pi)
+
     timestamps = [f"00:{str(m).zfill(2)}" for m in range(steps)]
 
-    def series(base: float, amp: float, period: float, noise: float) -> list[float]:
-        return [
-            round(base + amp * math.sin(2 * math.pi * t / period)
-                  + random.uniform(-noise, noise), 3)
-            for t in range(steps)
-        ]
+    polytopes = []
+    for t in range(steps):
+        p_sc = 1 + 0.15 * math.sin(2 * math.pi * t / steps + p_phase) + random.uniform(-0.05, 0.05)
+        q_sc = 1 + 0.10 * math.cos(2 * math.pi * t / steps + q_phase) + random.uniform(-0.03, 0.03)
+        verts = []
+        for i in range(k):
+            angle = 2 * math.pi * i / k
+            verts.append([
+                round(P_C + P_R * p_sc * math.cos(angle), 3),
+                round(Q_C + Q_R * q_sc * math.sin(angle), 3),
+            ])
+        polytopes.append({"t": timestamps[t], "vertices": verts})
 
     return {
         "window_minutes": steps,
         "step_minutes": 1,
         "timestamps": timestamps,
-        "p_flexibility": series(base=2.5, amp=0.8, period=10, noise=0.05),
-        "q_flexibility": series(base=1.0, amp=0.3, period=8,  noise=0.02),
+        "polytopes": polytopes,
     }
 
 
@@ -82,7 +101,7 @@ class AgentHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if self.path == "/flexibility":
-            result = run_flexibility_script()
+            result = run_flexibility_script(_device_id)
             body = json.dumps(result).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -153,6 +172,9 @@ def main() -> None:
     parser.add_argument("--backend", required=True,          help="Backend URL, e.g. http://localhost:8000")
     parser.add_argument("--port",    type=int, default=8765, help="Local HTTP server port (default 8765)")
     args = parser.parse_args()
+
+    global _device_id
+    _device_id = args.id
 
     backend = args.backend.rstrip("/")
     session = requests.Session()

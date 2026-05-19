@@ -40,7 +40,7 @@ const navItems: { to: RouteKey; label: string; icon: typeof LayoutGrid }[] = [
   { to: "/runs", label: "Simulation Runs", icon: PlayCircle },
   { to: "/results", label: "Results & Analytics", icon: ChartSpline },
   { to: "/conversion-tools", label: "Conversion Tools", icon: Wrench },
-  { to: "/connection-tool-devices", label: "Connectivity", icon: Cable },
+  { to: "/connection-tool-devices", label: "Live Testbed", icon: Cable },
   { to: "/users", label: "Users", icon: UsersIcon },
 ];
 

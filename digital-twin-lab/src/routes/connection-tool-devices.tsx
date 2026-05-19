@@ -10,16 +10,6 @@ import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { apiFetch, API_BASE } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import {
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-  Legend,
-} from "recharts";
 
 export const Route = createFileRoute("/connection-tool-devices")({
   head: () => ({
@@ -49,11 +39,16 @@ interface EdgeNode {
   devices: PiDevice[];
 }
 
+interface PolytopeStep {
+  t: string;
+  vertices: [number, number][];
+}
+
 interface FlexibilityResult {
   node_id: string;
   timestamps: string[];
-  p_flexibility: Record<string, number[]>;
-  q_flexibility: Record<string, number[]>;
+  devices: Record<string, PolytopeStep[]>;
+  combined: PolytopeStep[];
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -62,20 +57,6 @@ function fmt(v: number | null | undefined, unit: string) {
   if (v == null) return "—";
   return `${v.toFixed(2)} ${unit}`;
 }
-
-function toChartData(timestamps: string[], series: Record<string, number[]>) {
-  return timestamps.map((t, i) => ({
-    t,
-    ...Object.fromEntries(Object.entries(series).map(([k, v]) => [k, v[i]])),
-  }));
-}
-
-const LINE_COLORS = [
-  "var(--primary)",
-  "oklch(0.6 0.2 250)",
-  "oklch(0.6 0.2 140)",
-  "oklch(0.6 0.2 30)",
-];
 
 // ── Pi row ────────────────────────────────────────────────────────────────────
 
@@ -109,42 +90,109 @@ function PiRow({ pi }: { pi: PiDevice }) {
   );
 }
 
-// ── Flexibility chart ─────────────────────────────────────────────────────────
+// ── FOR polytope chart ────────────────────────────────────────────────────────
 
-function FlexChart({
-  title,
-  unit,
-  data,
-  keys,
+const CHART_COLORS = [
+  { stroke: "#1a56db", fill: "#1a56db" },   // Pi #1 — brand blue
+  { stroke: "#10b981", fill: "#10b981" },   // Pi #2 — green
+  { stroke: "#f59e0b", fill: "#f59e0b" },   // Pi #3 — amber
+  { stroke: "#8b5cf6", fill: "#8b5cf6" },   // Pi #4 — purple
+];
+
+function PolytopeChart({
+  vertices,
+  timestamp,
+  colorIndex = 0,
 }: {
-  title: string;
-  unit: string;
-  data: ReturnType<typeof toChartData>;
-  keys: string[];
+  vertices: [number, number][];
+  timestamp: string;
+  colorIndex?: number;
 }) {
+  const { stroke, fill } = CHART_COLORS[colorIndex % CHART_COLORS.length];
+  const W = 320, H = 220, PAD = 40;
+  // Raw data range (used for ticks)
+  const ps = vertices.map(v => v[0]);
+  const qs = vertices.map(v => v[1]);
+  const rawPMax = Math.max(...ps);
+  const rawQMin = Math.min(...qs);
+  const rawQMax = Math.max(...qs);
+  // P always starts at 0 (loads are positive) — keeps Y-axis at left edge
+  const pad = 0.5;
+  const pMin = 0;
+  const pMax = rawPMax + pad;
+  const qMin = rawQMin - pad;
+  const qMax = rawQMax + pad;
+
+  const sx = (p: number) => PAD + ((p - pMin) / (pMax - pMin)) * (W - 2 * PAD);
+  const sy = (q: number) => H - PAD - ((q - qMin) / (qMax - qMin)) * (H - 2 * PAD);
+
+  const pts = vertices.map(([p, q]) => `${sx(p)},${sy(q)}`).join(" ");
+  const ox = sx(0), oy = sy(0); // origin
+
+  // Tick marks — based on raw data range so they never exceed the visible area
+  const pTicks = Array.from({ length: Math.floor(rawPMax) + 1 }, (_, i) => i).filter(
+    v => v > 0 && v <= Math.floor(rawPMax),
+  );
+  const qRaw = Math.floor(Math.max(Math.abs(rawQMin), Math.abs(rawQMax)));
+  const qTicks = Array.from({ length: qRaw * 2 + 1 }, (_, i) => i - qRaw);
+
   return (
-    <div className="space-y-2">
-      <div className="text-sm font-semibold">{title}</div>
-      <ResponsiveContainer width="100%" height={200}>
-        <LineChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-          <XAxis dataKey="t" tick={{ fontSize: 11 }} />
-          <YAxis unit={` ${unit}`} tick={{ fontSize: 11 }} width={52} />
-          <Tooltip formatter={(v: number) => [`${v.toFixed(3)} ${unit}`]} />
-          <Legend wrapperStyle={{ fontSize: 12 }} />
-          {keys.map((key, i) => (
-            <Line
-              key={key}
-              type="monotone"
-              dataKey={key}
-              stroke={LINE_COLORS[i % LINE_COLORS.length]}
-              strokeWidth={2}
-              dot={false}
-            />
-          ))}
-        </LineChart>
-      </ResponsiveContainer>
-    </div>
+    <svg
+      width="100%"
+      viewBox={`0 0 ${W} ${H}`}
+      style={{ fontFamily: "inherit", display: "block", width: "100%" }}
+    >
+      {/* Grid lines */}
+      {pTicks.map((p) => (
+        <line key={`gp${p}`} x1={sx(p)} y1={PAD} x2={sx(p)} y2={H - PAD}
+          stroke="var(--border)" strokeWidth={0.75} strokeDasharray="3 3" />
+      ))}
+      {qTicks.map((q) => (
+        <line key={`gq${q}`} x1={PAD} y1={sy(q)} x2={W - PAD} y2={sy(q)}
+          stroke="var(--border)" strokeWidth={0.75} strokeDasharray="3 3" />
+      ))}
+
+      {/* Axes */}
+      <line x1={PAD} y1={oy} x2={W - PAD} y2={oy} stroke="currentColor" strokeWidth={1.5} />
+      <line x1={ox} y1={PAD} x2={ox} y2={H - PAD} stroke="currentColor" strokeWidth={1.5} />
+
+      {/* Axis arrows */}
+      <polygon points={`${W - PAD},${oy} ${W - PAD - 8},${oy - 4} ${W - PAD - 8},${oy + 4}`}
+        fill="currentColor" />
+      <polygon points={`${ox},${PAD} ${ox - 4},${PAD + 8} ${ox + 4},${PAD + 8}`}
+        fill="currentColor" />
+
+      {/* Tick labels */}
+      {pTicks.filter(p => p > 0).map((p) => (
+        <text key={`tp${p}`} x={sx(p)} y={oy + 16} fontSize={10}
+          fill="var(--muted-foreground)" textAnchor="middle">{p}</text>
+      ))}
+      {qTicks.filter(q => q !== 0).map((q) => (
+        <text key={`tq${q}`} x={ox - 8} y={sy(q) + 4} fontSize={10}
+          fill="var(--muted-foreground)" textAnchor="end">{q}</text>
+      ))}
+
+      {/* FOR polygon */}
+      {pts && (
+        <polygon
+          points={pts}
+          fill={fill}
+          fillOpacity={0.2}
+          stroke={stroke}
+          strokeWidth={2}
+        />
+      )}
+
+      {/* Axis labels */}
+      <text x={W - PAD + 10} y={oy + 4} fontSize={11} fill="currentColor" fontWeight={500}>
+        P (kW)
+      </text>
+      <text x={ox} y={PAD - 10} fontSize={11} fill="currentColor" fontWeight={500}
+        textAnchor="middle">
+        Q (kVAR)
+      </text>
+
+    </svg>
   );
 }
 
@@ -156,12 +204,14 @@ function ConnectionToolDevicesPage() {
   const [estimating, setEstimating] = useState(false);
   const [result, setResult] = useState<FlexibilityResult | null>(null);
   const [topoUrl, setTopoUrl] = useState<string | null>(null);
+  const [topoNetwork, setTopoNetwork] = useState<string | null>(null);
+  const [step, setStep] = useState(0);
 
   const location = useLocation();
   const isActive = location.pathname === "/connection-tool-devices";
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) ?? null;
-  const allActive = (selectedNode?.devices.length ?? 0) > 0 && (selectedNode?.devices.every((d) => d.active) ?? false);
+  const allActive = (selectedNode?.devices.length ?? 0) >= 2 && (selectedNode?.devices.every((d) => d.active) ?? false);
 
   async function fetchNodes() {
     try {
@@ -179,16 +229,26 @@ function ConnectionToolDevicesPage() {
     return () => clearInterval(id);
   }, [isActive]);
 
-  // Reset result and topology when node changes
+  // Reset result, step, and topology when node changes
   useEffect(() => {
     setResult(null);
+    setStep(0);
     setTopoUrl(null);
+    setTopoNetwork(null);
     if (!selectedNodeId) return;
     apiFetch(`${API_BASE}/edge-nodes/${selectedNodeId}/topology`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((data) => { if (data?.url) setTopoUrl(`${API_BASE}${data.url}`); })
+      .then((data) => {
+        if (data?.url) setTopoUrl(`${API_BASE}${data.url}`);
+        if (data?.network) setTopoNetwork(data.network);
+      })
       .catch(() => {});
   }, [selectedNodeId]);
+
+  // Reset slider when new result arrives
+  useEffect(() => {
+    setStep(0);
+  }, [result]);
 
   async function handleEstimate() {
     if (!selectedNodeId) return;
@@ -207,17 +267,13 @@ function ConnectionToolDevicesPage() {
     }
   }
 
-  const pData = result
-    ? toChartData(result.timestamps, result.p_flexibility)
-    : null;
-  const qData = result
-    ? toChartData(result.timestamps, result.q_flexibility)
-    : null;
+  const currentCombined = result?.combined[step] ?? null;
+  const deviceNames = result ? Object.keys(result.devices) : [];
 
   return (
     <AppShell>
       <PageHeader
-        title="Connection with Tool Devices"
+        title="Connection with Edge devices"
         description="Monitor edge nodes and estimate flexibility potential."
       />
 
@@ -315,35 +371,129 @@ function ConnectionToolDevicesPage() {
             )}
           </div>
 
-          {/* ── Right panel: topology + charts ───────────────────────── */}
-          <div className="space-y-6">
-            {/* Topology overview */}
+          {/* ── Right panel ───────────────────────────────────────────── */}
+          <div className="space-y-4">
+
+            {/* ── Topology ── */}
             {selectedNode && (
-              <div className="rounded-lg border border-border overflow-hidden bg-muted/20">
-                {topoUrl ? (
-                  <iframe
-                    src={topoUrl}
-                    className="w-full h-[300px] block"
-                    title="Network Topology"
-                  />
-                ) : (
-                  <div className="flex items-center justify-center h-[300px] text-sm text-muted-foreground">
-                    Loading topology…
-                  </div>
-                )}
+              <div className="space-y-2">
+                <div className="flex items-baseline gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Network Topology
+                  </p>
+                  {topoNetwork && (
+                    <span className="text-xs font-mono text-muted-foreground truncate">{topoNetwork}</span>
+                  )}
+                </div>
+                <div className="rounded-xl border border-border overflow-hidden">
+                  {topoUrl ? (
+                    <iframe
+                      src={topoUrl}
+                      className="w-full h-[260px] block"
+                      title="Network Topology"
+                    />
+                  ) : (
+                    <div className="flex items-center justify-center h-[260px] text-sm text-muted-foreground bg-muted/20">
+                      Loading topology…
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
-            {selectedNode && <Separator />}
+            {/* ── FOR ── */}
+            {result && currentCombined ? (
+              <div className="space-y-4">
+                {/* Title + timestamp */}
+                <div className="flex items-center gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex-1">
+                    Flexibility Operating Region (FOR)
+                  </p>
+                  <Badge variant="outline" className="tabular-nums font-mono text-xs">
+                    t = {currentCombined.t}
+                  </Badge>
+                </div>
 
-            {/* Flexibility charts */}
-            {pData && qData && result ? (
-              <div className="space-y-8">
-                <FlexChart title="P Flexibility Potential" unit="kW" data={pData} keys={Object.keys(result.p_flexibility)} />
-                <FlexChart title="Q Flexibility Potential" unit="kVAR" data={qData} keys={Object.keys(result.q_flexibility)} />
+                {/* Description */}
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Each polygon shows the set of all feasible{" "}
+                  <span className="font-medium text-foreground">active (P)</span> and{" "}
+                  <span className="font-medium text-foreground">reactive (Q)</span> power
+                  operating points that the device can deliver at the selected minute.
+                  Drag the slider to explore how the region evolves over the 15-minute horizon.
+                </p>
+
+                {/* Individual Pi charts side by side */}
+                <div className="grid grid-cols-2 gap-3">
+                  {deviceNames.map((name, i) => (
+                    <div key={name} className="rounded-xl border border-border bg-muted/10 p-3 space-y-2">
+                      {/* Chart header with color swatch */}
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="h-2.5 w-2.5 rounded-sm shrink-0"
+                          style={{ background: CHART_COLORS[i % CHART_COLORS.length].fill }}
+                        />
+                        <span className="text-xs font-semibold">{name}</span>
+                        <span className="text-xs text-muted-foreground ml-auto tabular-nums">
+                          P<sub>c</sub> ≈ {result.devices[name][step]?.vertices
+                            ? (result.devices[name][step].vertices.reduce((s, v) => s + v[0], 0) / result.devices[name][step].vertices.length).toFixed(1)
+                            : "—"} kW
+                        </span>
+                      </div>
+                      <div className="overflow-hidden">
+                        <PolytopeChart
+                          vertices={result.devices[name][step]?.vertices ?? []}
+                          timestamp={result.devices[name][step]?.t ?? ""}
+                          colorIndex={i}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Shared slider */}
+                <div className="space-y-1">
+                  <input
+                    type="range"
+                    min={0}
+                    max={result.timestamps.length - 1}
+                    value={step}
+                    onChange={(e) => setStep(Number(e.target.value))}
+                    className="w-full accent-primary"
+                  />
+                  <div className="flex justify-between text-xs text-muted-foreground tabular-nums">
+                    <span>{result.timestamps[0]}</span>
+                    <span className="text-foreground font-medium">{currentCombined.t}</span>
+                    <span>{result.timestamps.at(-1)}</span>
+                  </div>
+                </div>
+
+                {/* Legend */}
+                <div className="rounded-lg border border-border bg-muted/10 px-4 py-3 flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground">
+                  {deviceNames.map((name, i) => (
+                    <div key={name} className="flex items-center gap-1.5">
+                      <span
+                        className="h-3 w-3 rounded-sm border shrink-0"
+                        style={{
+                          background: CHART_COLORS[i % CHART_COLORS.length].fill + "33",
+                          borderColor: CHART_COLORS[i % CHART_COLORS.length].stroke,
+                        }}
+                      />
+                      <span>{name} — FOR boundary</span>
+                    </div>
+                  ))}
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-medium text-foreground">P</span>
+                    <span>Active power (kW) — horizontal axis</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-medium text-foreground">Q</span>
+                    <span>Reactive power (kVAR) — vertical axis</span>
+                  </div>
+                </div>
               </div>
             ) : (
-              <div className="flex items-center justify-center rounded-lg border border-dashed border-border bg-muted/20 min-h-[260px]">
+              <div className="flex items-center justify-center rounded-xl border border-dashed border-border bg-muted/20 min-h-[200px]">
                 <p className="text-sm text-muted-foreground text-center px-6">
                   {selectedNode
                     ? allActive
