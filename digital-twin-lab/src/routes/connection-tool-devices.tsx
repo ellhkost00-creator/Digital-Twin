@@ -184,11 +184,11 @@ function PolytopeChart({
       )}
 
       {/* Axis labels */}
-      <text x={W - PAD + 10} y={oy + 4} fontSize={11} fill="currentColor" fontWeight={500}>
+      <text x={W - PAD - 4} y={oy - 10} fontSize={11} fill="currentColor" fontWeight={500}
+        textAnchor="end">
         P (kW)
       </text>
-      <text x={ox} y={PAD - 10} fontSize={11} fill="currentColor" fontWeight={500}
-        textAnchor="middle">
+      <text x={ox + 8} y={PAD + 12} fontSize={11} fill="currentColor" fontWeight={500}>
         Q (kVAR)
       </text>
 
@@ -375,7 +375,7 @@ function ConnectionToolDevicesPage() {
           <div className="space-y-4">
 
             {/* ── Topology ── */}
-            {selectedNode && (
+            {selectedNode && (allActive || topoUrl) && (
               <div className="space-y-2">
                 <div className="flex items-baseline gap-2">
                   <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
