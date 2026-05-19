@@ -155,6 +155,7 @@ function ConnectionToolDevicesPage() {
   const [selectedNodeId, setSelectedNodeId] = useState<string>("");
   const [estimating, setEstimating] = useState(false);
   const [result, setResult] = useState<FlexibilityResult | null>(null);
+  const [topoUrl, setTopoUrl] = useState<string | null>(null);
 
   const location = useLocation();
   const isActive = location.pathname === "/connection-tool-devices";
@@ -178,9 +179,15 @@ function ConnectionToolDevicesPage() {
     return () => clearInterval(id);
   }, [isActive]);
 
-  // Reset result when node changes
+  // Reset result and topology when node changes
   useEffect(() => {
     setResult(null);
+    setTopoUrl(null);
+    if (!selectedNodeId) return;
+    apiFetch(`${API_BASE}/edge-nodes/${selectedNodeId}/topology`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => { if (data?.url) setTopoUrl(`${API_BASE}${data.url}`); })
+      .catch(() => {});
   }, [selectedNodeId]);
 
   async function handleEstimate() {
@@ -308,8 +315,28 @@ function ConnectionToolDevicesPage() {
             )}
           </div>
 
-          {/* ── Right panel: charts ────────────────────────────────────── */}
-          <div>
+          {/* ── Right panel: topology + charts ───────────────────────── */}
+          <div className="space-y-6">
+            {/* Topology overview */}
+            {selectedNode && (
+              <div className="rounded-lg border border-border overflow-hidden bg-muted/20">
+                {topoUrl ? (
+                  <iframe
+                    src={topoUrl}
+                    className="w-full h-[300px] block"
+                    title="Network Topology"
+                  />
+                ) : (
+                  <div className="flex items-center justify-center h-[300px] text-sm text-muted-foreground">
+                    Loading topology…
+                  </div>
+                )}
+              </div>
+            )}
+
+            {selectedNode && <Separator />}
+
+            {/* Flexibility charts */}
             {pData && qData && result ? (
               <div className="space-y-8">
                 <FlexChart title="P Flexibility Potential" unit="kW" data={pData} keys={Object.keys(result.p_flexibility)} />

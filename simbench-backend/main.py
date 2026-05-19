@@ -11,6 +11,9 @@ from typing import Literal
 import pandas as pd
 import simbench as sb
 import pandapower.timeseries as ts
+import plotly.graph_objects as go
+from pandapower.plotting.plotly import simple_plotly as pp_simple_plotly
+from generate_networks import style_traces, build_plot_html
 
 from contextlib import asynccontextmanager
 
@@ -2184,3 +2187,82 @@ def estimate_node_flexibility(node_id: str, _cu: dict = Depends(get_current_user
         "p_flexibility": p_combined,
         "q_flexibility": q_combined,
     }
+
+
+# ── Edge node topology ────────────────────────────────────────────────────────
+
+# Hardcoded for the 1-LV-rural1--0-no_sw SimBench network used in DT Lab.
+_TOPO_NETWORK   = "1-LV-rural1--0-no_sw"
+_TOPO_TRAFO_IDX = 0          # MV/LV transformer index → shown as "Edge Node"
+_TOPO_PI_BUSES  = [3, 0]     # LV bus indices where the two Raspberry Pis are connected
+_PI_COLORS      = ["#10b981", "#10b981"]   # green for both Pis
+
+
+@app.get("/edge-nodes/{node_id}/topology")
+def get_node_topology(node_id: str, _cu: dict = Depends(get_current_user)):
+    """
+    Generate (or regenerate) an annotated Plotly topology map for the edge node.
+    Highlights the MV/LV transformer as "Edge Node" and the two Pi buses.
+    Returns {"url": "/plots/topo-<node_id>.html"}.
+    """
+    if node_id not in _edge_nodes:
+        raise HTTPException(status_code=404, detail="Edge node not found")
+
+    # Load network topology (no power flow needed)
+    net = sb.get_simbench_net(_TOPO_NETWORK)
+
+    # Base plot + styling
+    fig = pp_simple_plotly(net, auto_open=False)
+    fig = style_traces(fig)
+
+    # ── Edge Node: midpoint between transformer HV and LV buses ──────────────
+    trafo = net.trafo.iloc[_TOPO_TRAFO_IDX]
+    hv = net.bus_geodata.loc[trafo["hv_bus"]]
+    lv = net.bus_geodata.loc[trafo["lv_bus"]]
+    tx = (hv["x"] + lv["x"]) / 2
+    ty = (hv["y"] + lv["y"]) / 2
+    fig.add_trace(go.Scatter(
+        x=[tx], y=[ty],
+        mode="markers+text",
+        name="Edge Node",
+        marker=dict(color="#f59e0b", size=22, symbol="star",
+                    line=dict(color="#ffffff", width=2)),
+        text=["Edge Node"],
+        textposition="top center",
+        textfont=dict(size=11, color="#000000"),
+        hoverinfo="name",
+    ))
+
+    # ── Pi buses ──────────────────────────────────────────────────────────────
+    for i, bus_idx in enumerate(_TOPO_PI_BUSES):
+        bx = net.bus_geodata.loc[bus_idx, "x"]
+        by = net.bus_geodata.loc[bus_idx, "y"]
+        fig.add_trace(go.Scatter(
+            x=[bx], y=[by],
+            mode="markers+text",
+            name=f"Pi #{i + 1}",
+            marker=dict(color=_PI_COLORS[i], size=16, symbol="circle",
+                        line=dict(color="#ffffff", width=2)),
+            text=[f"Pi #{i + 1}"],
+            textposition="top center",
+            textfont=dict(size=11, color=_PI_COLORS[i]),
+            hoverinfo="name",
+        ))
+
+    # ── Auto-zoom to transformer + Pi buses ───────────────────────────────────
+    xs = [tx] + [net.bus_geodata.loc[b, "x"] for b in _TOPO_PI_BUSES]
+    ys = [ty] + [net.bus_geodata.loc[b, "y"] for b in _TOPO_PI_BUSES]
+    pad_x = (max(xs) - min(xs)) * 0.4 or 0.001
+    pad_y = (max(ys) - min(ys)) * 0.4 or 0.001
+    fig.update_layout(
+        xaxis=dict(range=[min(xs) - pad_x, max(xs) + pad_x]),
+        yaxis=dict(range=[min(ys) - pad_y, max(ys) + pad_y]),
+    )
+
+    # ── Write HTML and return URL ─────────────────────────────────────────────
+    html = build_plot_html(fig, _TOPO_NETWORK)
+    PLOTS_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = PLOTS_DIR / f"topo-{node_id}.html"
+    out_path.write_text(html, encoding="utf-8")
+
+    return {"url": f"/plots/topo-{node_id}.html"}
