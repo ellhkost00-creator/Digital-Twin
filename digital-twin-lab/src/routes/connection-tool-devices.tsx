@@ -1,5 +1,5 @@
 import { createFileRoute, useLocation } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Activity, RefreshCw, Zap } from "lucide-react";
 import { AppShell, PageHeader } from "@/components/app-shell";
 import { Card } from "@/components/ui/card";
@@ -109,12 +109,13 @@ function PolytopeChart({
   timestamp: string;
   colorIndex?: number;
 }) {
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; p: number; q: number } | null>(null);
+
   const { stroke, fill } = CHART_COLORS[colorIndex % CHART_COLORS.length];
   const W = 400, H = 300, PAD = 36;
   const ps = vertices.map(v => v[0]);
   const qs = vertices.map(v => v[1]);
   const pad = 0.5;
-  // Symmetric around 0 so negative P/Q (reverse flow) are always visible
   const pAbsMax = Math.max(Math.abs(Math.min(...ps)), Math.abs(Math.max(...ps))) + pad;
   const qAbsMax = Math.max(Math.abs(Math.min(...qs)), Math.abs(Math.max(...qs))) + pad;
   const pMin = -pAbsMax, pMax = pAbsMax;
@@ -124,13 +125,15 @@ function PolytopeChart({
   const sy = (q: number) => H - PAD - ((q - qMin) / (qMax - qMin)) * (H - 2 * PAD);
 
   const pts = vertices.map(([p, q]) => `${sx(p)},${sy(q)}`).join(" ");
-  const ox = sx(0), oy = sy(0); // origin at (0,0)
+  const ox = sx(0), oy = sy(0);
 
-  // Tick marks symmetric around 0
   const pStep = Math.ceil(pAbsMax);
   const qStep = Math.ceil(qAbsMax);
   const pTicks = Array.from({ length: pStep * 2 + 1 }, (_, i) => i - pStep).filter(v => v !== 0);
   const qTicks = Array.from({ length: qStep * 2 + 1 }, (_, i) => i - qStep).filter(v => v !== 0);
+
+  // Tooltip box dimensions
+  const TW = 112, TH = 40;
 
   return (
     <svg
@@ -170,24 +173,46 @@ function PolytopeChart({
 
       {/* FOR polygon */}
       {pts && (
-        <polygon
-          points={pts}
-          fill={fill}
-          fillOpacity={0.2}
-          stroke={stroke}
-          strokeWidth={1.2}
-        />
+        <polygon points={pts} fill={fill} fillOpacity={0.2} stroke={stroke} strokeWidth={1.2} />
+      )}
+
+      {/* Vertex hit areas — invisible circles, trigger tooltip on hover */}
+      {vertices.map(([p, q], i) => {
+        const cx = sx(p), cy = sy(q);
+        // flip tooltip left if too close to right edge
+        const tx = cx + TW + 12 > W ? cx - TW - 8 : cx + 8;
+        const ty = Math.max(PAD, Math.min(cy - TH / 2, H - PAD - TH));
+        return (
+          <g key={i}>
+            <circle cx={cx} cy={cy} r={8} fill="transparent" style={{ cursor: "crosshair" }}
+              onMouseEnter={() => setTooltip({ x: tx, y: ty, p, q })}
+              onMouseLeave={() => setTooltip(null)}
+            />
+          </g>
+        );
+      })}
+
+      {/* Tooltip */}
+      {tooltip && (
+        <g style={{ pointerEvents: "none" }}>
+          <rect x={tooltip.x} y={tooltip.y} width={TW} height={TH} rx={5}
+            fill="#1e293b" opacity={0.93} />
+          <text x={tooltip.x + 9} y={tooltip.y + 15} fontSize={10} fill="#f8fafc" fontWeight={600}>
+            P: {tooltip.p.toFixed(3)} kW
+          </text>
+          <text x={tooltip.x + 9} y={tooltip.y + 30} fontSize={10} fill="#94a3b8">
+            Q: {tooltip.q.toFixed(3)} kVAR
+          </text>
+        </g>
       )}
 
       {/* Axis labels */}
-      <text x={W - PAD - 4} y={oy - 7} fontSize={9} fill="currentColor" fontWeight={500}
-        textAnchor="end">
+      <text x={W - PAD - 4} y={oy - 7} fontSize={9} fill="currentColor" fontWeight={500} textAnchor="end">
         P (kW)
       </text>
       <text x={ox + 5} y={PAD + 9} fontSize={9} fill="currentColor" fontWeight={500}>
         Q (kVAR)
       </text>
-
     </svg>
   );
 }
@@ -202,6 +227,9 @@ function ConnectionToolDevicesPage() {
   const [topoUrl, setTopoUrl] = useState<string | null>(null);
   const [topoNetwork, setTopoNetwork] = useState<string | null>(null);
   const [step, setStep] = useState(0);
+  const [forPlotUrl, setForPlotUrl] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"3d" | "2d">("3d");
+  const iframeRef = useRef<HTMLIFrameElement>(null);
 
   const location = useLocation();
   const isActive = location.pathname === "/connection-tool-devices";
@@ -248,6 +276,134 @@ function ConnectionToolDevicesPage() {
   // Reset slider when new result arrives
   useEffect(() => {
     setStep(0);
+  }, [result]);
+
+  // Send highlight step to iframe via postMessage
+  useEffect(() => {
+    if (!iframeRef.current?.contentWindow || !result) return;
+    iframeRef.current.contentWindow.postMessage(
+      { type: "highlight", step, n: result.combined.length },
+      "*",
+    );
+  }, [step, result]);
+
+  // Build 3D Plotly blob when result changes
+  useEffect(() => {
+    if (forPlotUrl) URL.revokeObjectURL(forPlotUrl);
+    if (!result) { setForPlotUrl(null); return; }
+
+    const traces: object[] = [];
+    const n = result.combined.length;
+
+    const allP = result.combined.flatMap(s => s.vertices.map(v => v[0]));
+    const allQ = result.combined.flatMap(s => s.vertices.map(v => v[1]));
+    const pExt = Math.max(Math.abs(Math.min(...allP)), Math.abs(Math.max(...allP))) * 1.15;
+    const qExt = Math.max(Math.abs(Math.min(...allQ)), Math.abs(Math.max(...allQ))) * 1.15;
+
+    // Color interpolation: deep blue → violet
+    const lerp = (a: number, b: number, t: number) => Math.round(a + (b - a) * t);
+    const color = (t: number) => {
+      const r = lerp(29, 124, t/(n-1)), g = lerp(78, 58, t/(n-1)), b = lerp(216, 237, t/(n-1));
+      return `rgb(${r},${g},${b})`;
+    };
+
+    // P=0 plane (Q–Time): light blue
+    traces.push({ type:"mesh3d",
+      x:[0,0,0,0], y:[0,n-1,n-1,0], z:[-qExt,-qExt,qExt,qExt],
+      i:[0,0], j:[1,2], k:[2,3],
+      color:"#bfdbfe", opacity:0.45, showlegend:true, name:"P = 0 plane", hoverinfo:"skip", flatshading:true });
+    // P=0 plane border
+    traces.push({ type:"scatter3d",
+      x:[0,0,0,0,0], y:[0,n-1,n-1,0,0], z:[-qExt,-qExt,qExt,qExt,-qExt],
+      mode:"lines", line:{color:"#93c5fd",width:1.5}, showlegend:false, hoverinfo:"skip" });
+
+    // Q=0 plane (P–Time): light green
+    traces.push({ type:"mesh3d",
+      x:[-pExt,pExt,pExt,-pExt], y:[0,0,n-1,n-1], z:[0,0,0,0],
+      i:[0,0], j:[1,2], k:[2,3],
+      color:"#bbf7d0", opacity:0.45, showlegend:true, name:"Q = 0 plane", hoverinfo:"skip", flatshading:true });
+    // Q=0 plane border
+    traces.push({ type:"scatter3d",
+      x:[-pExt,pExt,pExt,-pExt,-pExt], y:[0,0,n-1,n-1,0], z:[0,0,0,0,0],
+      mode:"lines", line:{color:"#86efac",width:1.5}, showlegend:false, hoverinfo:"skip" });
+
+    result.combined.forEach((step, t) => {
+      const c = color(t);
+      const vx = step.vertices.map(v => v[0]);
+      const vz = step.vertices.map(v => v[1]);
+      const vy = vx.map(() => t);
+      const k = vx.length;
+
+      // Filled polygon (mesh)
+      const ii = Array.from({length: k - 2}, () => 0);
+      const jj = Array.from({length: k - 2}, (_, i) => i + 1);
+      const kk = Array.from({length: k - 2}, (_, i) => i + 2);
+      traces.push({
+        type:"mesh3d", x:vx, y:vy, z:vz,
+        i:ii, j:jj, k:kk,
+        color:c, opacity:0.18, flatshading:true,
+        showlegend:false, hoverinfo:"skip",
+      });
+
+      // Polygon boundary with hover
+      const hx = [...vx, vx[0]], hy = [...vy, t], hz = [...vz, vz[0]];
+      traces.push({
+        type:"scatter3d", x:hx, y:hy, z:hz, mode:"lines",
+        line:{ color:c, width:3 },
+        showlegend:false,
+        hovertemplate:"<b>t = %{y} min</b><br>P: %{x:.2f} kW<br>Q: %{z:.2f} kVAR<extra></extra>",
+      });
+    });
+
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"/>
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"><\/script>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:100%;height:100%;background:#f8fafc}
+  .hoverlayer .hovertext rect{fill:#1e293b!important;opacity:0.92!important}
+  .hoverlayer .hovertext text{fill:#f8fafc!important;font-size:12px!important}
+</style>
+</head><body>
+<div id="p" style="width:100%;height:100%"></div>
+<script>
+Plotly.newPlot("p",${JSON.stringify(traces)},{
+  margin:{l:0,r:0,t:0,b:80},
+  paper_bgcolor:"#f8fafc",
+  hoverlabel:{bgcolor:"#1e293b",font:{color:"#f8fafc",size:12},bordercolor:"#334155"},
+  scene:{
+    xaxis:{title:"P (kW)",titlefont:{size:12,color:"#334155"},tickfont:{size:10},
+           gridcolor:"#e2e8f0",zerolinecolor:"#94a3b8",zerolinewidth:2,showspikes:false},
+    yaxis:{title:"Time (min)",titlefont:{size:12,color:"#334155"},tickfont:{size:10},
+           gridcolor:"#e2e8f0",showspikes:false},
+    zaxis:{title:"Q (kVAR)",titlefont:{size:12,color:"#334155"},tickfont:{size:10},
+           gridcolor:"#e2e8f0",zerolinecolor:"#94a3b8",zerolinewidth:2,showspikes:false},
+    camera:{eye:{x:1.7,y:-1.6,z:0.8}},
+    bgcolor:"#f8fafc",
+    aspectmode:"manual",
+    aspectratio:{x:1.4,y:1.5,z:0.9},
+  },
+  showlegend:true,
+  legend:{x:0.01,y:0.98,bgcolor:"rgba(248,250,252,0.85)",bordercolor:"#e2e8f0",borderwidth:1,font:{size:11,color:"#334155"}},
+},{displayModeBar:false,responsive:true});
+
+// Highlight on postMessage
+const N_PLANES = 4; // plane traces before polygon traces
+const N = ${n};
+window.addEventListener('message', function(e) {
+  if (!e.data || e.data.type !== 'highlight') return;
+  const s = e.data.step;
+  for (let t = 0; t < N; t++) {
+    const meshIdx = N_PLANES + t * 2;
+    const lineIdx = N_PLANES + t * 2 + 1;
+    const isHl = t === s;
+    Plotly.restyle('p', { opacity: isHl ? 0.55 : 0.18 }, [meshIdx]);
+    Plotly.restyle('p', { 'line.width': isHl ? 7 : 2.5, 'line.color': isHl ? '#f59e0b' : null }, [lineIdx]);
+  }
+});
+<\/script></body></html>`;
+
+    const blob = new Blob([html], { type: "text/html" });
+    setForPlotUrl(URL.createObjectURL(blob));
   }, [result]);
 
   async function handleEstimate() {
@@ -404,59 +560,79 @@ function ConnectionToolDevicesPage() {
             {/* ── FOR ── */}
             {result && currentCombined ? (
               <div className="space-y-4">
-                {/* Title + timestamp */}
+                {/* Title + view toggle */}
                 <div className="flex items-center gap-2">
                   <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex-1">
                     Flexibility Operating Region — CCP (MV/LV)
                   </p>
+                  <div className="flex rounded-md border border-border overflow-hidden text-xs">
+                    <button
+                      onClick={() => setViewMode("2d")}
+                      className={cn(
+                        "px-3 py-1.5 font-medium transition-colors",
+                        viewMode === "2d"
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-background text-muted-foreground hover:bg-muted"
+                      )}
+                    >
+                      2D
+                    </button>
+                    <button
+                      onClick={() => setViewMode("3d")}
+                      className={cn(
+                        "px-3 py-1.5 font-medium transition-colors border-l border-border",
+                        viewMode === "3d"
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-background text-muted-foreground hover:bg-muted"
+                      )}
+                    >
+                      3D
+                    </button>
+                  </div>
                   <Badge variant="outline" className="tabular-nums font-mono text-xs">
-                    t = {currentCombined.t}
+                    15-min horizon
                   </Badge>
                 </div>
 
-                {/* Description */}
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  Aggregated FOR at the{" "}
-                  <span className="font-medium text-foreground">Common Coupling Point</span> (MV/LV transformer).
-                  The polygon encloses all feasible{" "}
-                  <span className="font-medium text-foreground">active (P)</span> and{" "}
-                  <span className="font-medium text-foreground">reactive (Q)</span> power
-                  set-points. Negative P indicates reverse power flow back to the grid.
-                  Drag the slider to explore how the region evolves over the 15-minute horizon.
-                </p>
+                {/* 2D view */}
+                {viewMode === "2d" && (
+                  <div className="space-y-3">
+                    <div className="rounded-xl border border-border overflow-hidden bg-muted/10 p-4 flex justify-center">
+                      <div style={{ width: "72%" }}>
+                        <PolytopeChart
+                          vertices={currentCombined.vertices}
+                          timestamp={currentCombined.t}
+                          colorIndex={0}
+                        />
+                      </div>
+                    </div>
+                    {/* Time slider */}
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs text-muted-foreground w-10 tabular-nums">{result.combined[0].t}</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={result.combined.length - 1}
+                        value={step}
+                        onChange={e => setStep(Number(e.target.value))}
+                        className="flex-1 accent-primary h-1.5 cursor-pointer"
+                      />
+                      <span className="text-xs text-muted-foreground w-10 text-right tabular-nums">
+                        {result.combined.at(-1)?.t}
+                      </span>
+                    </div>
+                  </div>
+                )}
 
-                {/* Combined chart */}
-                <div className="rounded-xl border border-border bg-muted/10 p-3 space-y-2">
-                  <p className="text-xs font-semibold text-center text-foreground tracking-tight">
-                    Aggregated FOR at CCP — t = {currentCombined.t}
-                  </p>
-                  <div className="flex justify-center">
-                  <div style={{ width: 480 }}>
-                    <PolytopeChart
-                      vertices={currentCombined.vertices}
-                      timestamp={currentCombined.t}
-                      colorIndex={0}
-                    />
+                {/* 3D view */}
+                {viewMode === "3d" && (
+                  <div className="rounded-xl border border-border overflow-hidden bg-muted/10">
+                    {forPlotUrl
+                      ? <iframe ref={iframeRef} src={forPlotUrl} className="w-full h-[500px] block" title="FOR 3D" />
+                      : <div className="flex items-center justify-center h-[380px] text-sm text-muted-foreground">Generating plot…</div>
+                    }
                   </div>
-                  </div>
-                </div>
-
-                {/* Slider */}
-                <div className="space-y-1">
-                  <input
-                    type="range"
-                    min={0}
-                    max={result.timestamps.length - 1}
-                    value={step}
-                    onChange={(e) => setStep(Number(e.target.value))}
-                    className="w-full accent-primary"
-                  />
-                  <div className="flex justify-between text-xs text-muted-foreground tabular-nums">
-                    <span>{result.timestamps[0]}</span>
-                    <span className="text-foreground font-medium">{currentCombined.t}</span>
-                    <span>{result.timestamps.at(-1)}</span>
-                  </div>
-                </div>
+                )}
 
                 {/* Legend */}
                 <div className="rounded-lg border border-border bg-muted/10 px-4 py-3 flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground">
