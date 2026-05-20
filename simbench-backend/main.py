@@ -2258,10 +2258,10 @@ def get_node_topology(node_id: str, _cu: dict = Depends(get_current_user)):
     fig.add_trace(go.Scatter(
         x=[tx], y=[ty],
         mode="markers+text",
-        name="Edge Node",
+        name="Edge Node (CCP)",
         marker=dict(color="#f59e0b", size=22, symbol="triangle-up",
                     line=dict(color="#ffffff", width=2)),
-        text=["Edge Node"],
+        text=["Edge Node (CCP)"],
         textposition="middle right",
         textfont=dict(size=11, color="#f59e0b"),
         hoverinfo="name",

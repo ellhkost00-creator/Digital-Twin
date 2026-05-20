@@ -63,8 +63,8 @@ def run_flexibility_script(device_id: str = "") -> dict:
 
     steps = 15
     k = 10
-    P_C = rng.uniform(1.5, 3.5)   # centre shifts per device
-    Q_C = rng.uniform(-0.3, 0.3)
+    P_C = 0.0                      # centred at origin — negative P = reverse power flow
+    Q_C = 0.0
     P_R = rng.uniform(0.8, 1.4)   # radius differs per device
     Q_R = rng.uniform(0.5, 1.0)
     p_phase = rng.uniform(0, math.pi)   # time-variation phase differs too

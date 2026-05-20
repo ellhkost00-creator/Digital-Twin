@@ -110,32 +110,27 @@ function PolytopeChart({
   colorIndex?: number;
 }) {
   const { stroke, fill } = CHART_COLORS[colorIndex % CHART_COLORS.length];
-  const W = 320, H = 220, PAD = 40;
-  // Raw data range (used for ticks)
+  const W = 400, H = 300, PAD = 36;
   const ps = vertices.map(v => v[0]);
   const qs = vertices.map(v => v[1]);
-  const rawPMax = Math.max(...ps);
-  const rawQMin = Math.min(...qs);
-  const rawQMax = Math.max(...qs);
-  // P always starts at 0 (loads are positive) — keeps Y-axis at left edge
   const pad = 0.5;
-  const pMin = 0;
-  const pMax = rawPMax + pad;
-  const qMin = rawQMin - pad;
-  const qMax = rawQMax + pad;
+  // Symmetric around 0 so negative P/Q (reverse flow) are always visible
+  const pAbsMax = Math.max(Math.abs(Math.min(...ps)), Math.abs(Math.max(...ps))) + pad;
+  const qAbsMax = Math.max(Math.abs(Math.min(...qs)), Math.abs(Math.max(...qs))) + pad;
+  const pMin = -pAbsMax, pMax = pAbsMax;
+  const qMin = -qAbsMax, qMax = qAbsMax;
 
   const sx = (p: number) => PAD + ((p - pMin) / (pMax - pMin)) * (W - 2 * PAD);
   const sy = (q: number) => H - PAD - ((q - qMin) / (qMax - qMin)) * (H - 2 * PAD);
 
   const pts = vertices.map(([p, q]) => `${sx(p)},${sy(q)}`).join(" ");
-  const ox = sx(0), oy = sy(0); // origin
+  const ox = sx(0), oy = sy(0); // origin at (0,0)
 
-  // Tick marks — based on raw data range so they never exceed the visible area
-  const pTicks = Array.from({ length: Math.floor(rawPMax) + 1 }, (_, i) => i).filter(
-    v => v > 0 && v <= Math.floor(rawPMax),
-  );
-  const qRaw = Math.floor(Math.max(Math.abs(rawQMin), Math.abs(rawQMax)));
-  const qTicks = Array.from({ length: qRaw * 2 + 1 }, (_, i) => i - qRaw);
+  // Tick marks symmetric around 0
+  const pStep = Math.ceil(pAbsMax);
+  const qStep = Math.ceil(qAbsMax);
+  const pTicks = Array.from({ length: pStep * 2 + 1 }, (_, i) => i - pStep).filter(v => v !== 0);
+  const qTicks = Array.from({ length: qStep * 2 + 1 }, (_, i) => i - qStep).filter(v => v !== 0);
 
   return (
     <svg
@@ -146,30 +141,30 @@ function PolytopeChart({
       {/* Grid lines */}
       {pTicks.map((p) => (
         <line key={`gp${p}`} x1={sx(p)} y1={PAD} x2={sx(p)} y2={H - PAD}
-          stroke="var(--border)" strokeWidth={0.75} strokeDasharray="3 3" />
+          stroke="var(--border)" strokeWidth={0.5} strokeDasharray="2 2" />
       ))}
       {qTicks.map((q) => (
         <line key={`gq${q}`} x1={PAD} y1={sy(q)} x2={W - PAD} y2={sy(q)}
-          stroke="var(--border)" strokeWidth={0.75} strokeDasharray="3 3" />
+          stroke="var(--border)" strokeWidth={0.5} strokeDasharray="2 2" />
       ))}
 
       {/* Axes */}
-      <line x1={PAD} y1={oy} x2={W - PAD} y2={oy} stroke="currentColor" strokeWidth={1.5} />
-      <line x1={ox} y1={PAD} x2={ox} y2={H - PAD} stroke="currentColor" strokeWidth={1.5} />
+      <line x1={PAD} y1={oy} x2={W - PAD} y2={oy} stroke="currentColor" strokeWidth={1} />
+      <line x1={ox} y1={PAD} x2={ox} y2={H - PAD} stroke="currentColor" strokeWidth={1} />
 
       {/* Axis arrows */}
-      <polygon points={`${W - PAD},${oy} ${W - PAD - 8},${oy - 4} ${W - PAD - 8},${oy + 4}`}
+      <polygon points={`${W - PAD},${oy} ${W - PAD - 6},${oy - 3} ${W - PAD - 6},${oy + 3}`}
         fill="currentColor" />
-      <polygon points={`${ox},${PAD} ${ox - 4},${PAD + 8} ${ox + 4},${PAD + 8}`}
+      <polygon points={`${ox},${PAD} ${ox - 3},${PAD + 6} ${ox + 3},${PAD + 6}`}
         fill="currentColor" />
 
       {/* Tick labels */}
-      {pTicks.filter(p => p > 0).map((p) => (
-        <text key={`tp${p}`} x={sx(p)} y={oy + 16} fontSize={10}
+      {pTicks.map((p) => (
+        <text key={`tp${p}`} x={sx(p)} y={oy + 11} fontSize={8}
           fill="var(--muted-foreground)" textAnchor="middle">{p}</text>
       ))}
       {qTicks.filter(q => q !== 0).map((q) => (
-        <text key={`tq${q}`} x={ox - 8} y={sy(q) + 4} fontSize={10}
+        <text key={`tq${q}`} x={ox - 5} y={sy(q) + 3} fontSize={8}
           fill="var(--muted-foreground)" textAnchor="end">{q}</text>
       ))}
 
@@ -180,16 +175,16 @@ function PolytopeChart({
           fill={fill}
           fillOpacity={0.2}
           stroke={stroke}
-          strokeWidth={2}
+          strokeWidth={1.2}
         />
       )}
 
       {/* Axis labels */}
-      <text x={W - PAD - 4} y={oy - 10} fontSize={11} fill="currentColor" fontWeight={500}
+      <text x={W - PAD - 4} y={oy - 7} fontSize={9} fill="currentColor" fontWeight={500}
         textAnchor="end">
         P (kW)
       </text>
-      <text x={ox + 8} y={PAD + 12} fontSize={11} fill="currentColor" fontWeight={500}>
+      <text x={ox + 5} y={PAD + 9} fontSize={9} fill="currentColor" fontWeight={500}>
         Q (kVAR)
       </text>
 
@@ -412,7 +407,7 @@ function ConnectionToolDevicesPage() {
                 {/* Title + timestamp */}
                 <div className="flex items-center gap-2">
                   <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex-1">
-                    Flexibility Operating Region (FOR)
+                    Flexibility Operating Region — CCP (MV/LV)
                   </p>
                   <Badge variant="outline" className="tabular-nums font-mono text-xs">
                     t = {currentCombined.t}
@@ -421,44 +416,32 @@ function ConnectionToolDevicesPage() {
 
                 {/* Description */}
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  Each polygon shows the set of all feasible{" "}
+                  Aggregated FOR at the{" "}
+                  <span className="font-medium text-foreground">Common Coupling Point</span> (MV/LV transformer).
+                  The polygon encloses all feasible{" "}
                   <span className="font-medium text-foreground">active (P)</span> and{" "}
                   <span className="font-medium text-foreground">reactive (Q)</span> power
-                  operating points that the device can deliver at the selected minute.
+                  set-points. Negative P indicates reverse power flow back to the grid.
                   Drag the slider to explore how the region evolves over the 15-minute horizon.
                 </p>
 
-                {/* Individual Pi charts side by side */}
-                <div className="grid grid-cols-2 gap-3">
-                  {deviceNames.map((name, i) => (
-                    <div key={name} className="rounded-xl border border-border bg-muted/10 p-3 space-y-2">
-                      {/* Chart header with color swatch */}
-                      <div className="flex items-center gap-2">
-                        <span
-                          className="h-2.5 w-2.5 rounded-sm shrink-0"
-                          style={{ background: CHART_COLORS[i % CHART_COLORS.length].fill }}
-                        />
-                        <span className="text-xs font-semibold">
-                          {result.bus_labels?.[name] ? `${result.bus_labels[name]} — ${name}` : name}
-                        </span>
-                        <span className="text-xs text-muted-foreground ml-auto tabular-nums">
-                          P<sub>c</sub> ≈ {result.devices[name][step]?.vertices
-                            ? (result.devices[name][step].vertices.reduce((s, v) => s + v[0], 0) / result.devices[name][step].vertices.length).toFixed(1)
-                            : "—"} kW
-                        </span>
-                      </div>
-                      <div className="overflow-hidden">
-                        <PolytopeChart
-                          vertices={result.devices[name][step]?.vertices ?? []}
-                          timestamp={result.devices[name][step]?.t ?? ""}
-                          colorIndex={i}
-                        />
-                      </div>
-                    </div>
-                  ))}
+                {/* Combined chart */}
+                <div className="rounded-xl border border-border bg-muted/10 p-3 space-y-2">
+                  <p className="text-xs font-semibold text-center text-foreground tracking-tight">
+                    Aggregated FOR at CCP — t = {currentCombined.t}
+                  </p>
+                  <div className="flex justify-center">
+                  <div style={{ width: 480 }}>
+                    <PolytopeChart
+                      vertices={currentCombined.vertices}
+                      timestamp={currentCombined.t}
+                      colorIndex={0}
+                    />
+                  </div>
+                  </div>
                 </div>
 
-                {/* Shared slider */}
+                {/* Slider */}
                 <div className="space-y-1">
                   <input
                     type="range"
@@ -477,25 +460,31 @@ function ConnectionToolDevicesPage() {
 
                 {/* Legend */}
                 <div className="rounded-lg border border-border bg-muted/10 px-4 py-3 flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground">
-                  {deviceNames.map((name, i) => (
-                    <div key={name} className="flex items-center gap-1.5">
-                      <span
-                        className="h-3 w-3 rounded-sm border shrink-0"
-                        style={{
-                          background: CHART_COLORS[i % CHART_COLORS.length].fill + "33",
-                          borderColor: CHART_COLORS[i % CHART_COLORS.length].stroke,
-                        }}
-                      />
-                      <span>{result.bus_labels?.[name] ?? name} — FOR boundary</span>
-                    </div>
-                  ))}
                   <div className="flex items-center gap-1.5">
-                    <span className="font-medium text-foreground">P</span>
-                    <span>Active power (kW) — horizontal axis</span>
+                    <span
+                      className="h-3 w-3 rounded-sm border shrink-0"
+                      style={{
+                        background: CHART_COLORS[0].fill + "33",
+                        borderColor: CHART_COLORS[0].stroke,
+                      }}
+                    />
+                    <span>Aggregated FOR — CCP</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <span className="font-medium text-foreground">Q</span>
-                    <span>Reactive power (kVAR) — vertical axis</span>
+                    <span className="font-medium text-foreground">P &gt; 0</span>
+                    <span>Power consumption</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-medium text-foreground">P &lt; 0</span>
+                    <span>Reverse flow to grid</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-medium text-foreground">Q &gt; 0</span>
+                    <span>Reactive power absorption</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-medium text-foreground">Q &lt; 0</span>
+                    <span>Reactive power injection</span>
                   </div>
                 </div>
               </div>

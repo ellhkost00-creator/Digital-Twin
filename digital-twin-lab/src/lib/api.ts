@@ -1,7 +1,7 @@
 import type { Network } from "@/lib/mock-data";
 import { getToken, clearToken } from "@/lib/auth";
 
-export const API_BASE =  "http://192.168.188.201:8000";
+export const API_BASE =  "http://127.0.0.1:8000";
 
 // ── Central fetch wrapper ─────────────────────────────────────────────────────
 // Injects Authorization: Bearer <token> into every request.
