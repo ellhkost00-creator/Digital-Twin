@@ -230,13 +230,17 @@ function ConnectionToolDevicesPage() {
     return () => clearInterval(id);
   }, [isActive]);
 
-  // Reset result, step, and topology when node changes
+  // Reset everything when node changes
   useEffect(() => {
     setResult(null);
     setStep(0);
     setTopoUrl(null);
     setTopoNetwork(null);
-    if (!selectedNodeId) return;
+  }, [selectedNodeId]);
+
+  // Fetch topology only once both Pis are active — then keep it even if one goes offline
+  useEffect(() => {
+    if (!allActive || !selectedNodeId || topoUrl) return;
     apiFetch(`${API_BASE}/edge-nodes/${selectedNodeId}/topology`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
@@ -244,7 +248,7 @@ function ConnectionToolDevicesPage() {
         if (data?.network) setTopoNetwork(data.network);
       })
       .catch(() => {});
-  }, [selectedNodeId]);
+  }, [allActive, selectedNodeId]);
 
   // Reset slider when new result arrives
   useEffect(() => {
