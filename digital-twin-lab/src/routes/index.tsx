@@ -10,6 +10,7 @@ import {
   Book,
   ShieldCheck,
   Wrench,
+  Cable,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,14 +31,14 @@ export const Route = createFileRoute("/")({
 const features = [
   { icon: PlayCircle, title: "Power-flow & time-series", desc: "Run balanced and unbalanced studies on MV/LV grids." },
   { icon: AlertTriangle, title: "Violation detection", desc: "Auto-flag voltage and overload limits across runs." },
-  { icon: Network, title: "Network library", desc: "Curated benchmarks and your own pandapower models." },
-  { icon: Wrench, title: "Conversion and Validation", desc: "Convert networks from other formats to pandapower and validate their integrity." }
+  { icon: Wrench, title: "Conversion and Validation", desc: "Convert networks from other formats to pandapower and validate their integrity." },
+  { icon: Cable, title: "Live Testbed", desc: "Connect edge devices, estimate flexibility regions and visualize the FOR in real-time." },
 ];
 
 const stats = [
-  { v: "40+", l: "Networks" },
-  { v: "3.2k", l: "Runs / month" },
-  { v: "98.7%", l: "Convergence" },
+  { v: "MV & LV grids", l: "Multi-voltage network support" },
+  { v: "Real-time edge", l: "Live device connectivity" },
+  { v: "Open standards", l: "pandapower & SimBench based" },
 ];
 
 function LoginPage() {
@@ -133,8 +134,8 @@ function LoginPage() {
           </h1>
           <p className="text-sidebar-foreground/70 text-[15px] leading-relaxed">
             Model, simulate and analyze MV and LV grids. Run power-flow and
-            time-series studies, detect violations, and convert networks from other formats to pandapower — all
-            in one workspace.
+            time-series studies, detect violations, convert networks, and connect
+            real edge devices to estimate flexibility operating regions — all in one workspace.
           </p>
 
           {/* Feature bullets */}
@@ -164,7 +165,7 @@ function LoginPage() {
           <div className="grid grid-cols-3 gap-4 pt-4 border-t border-sidebar-border/60 mt-2">
             {stats.map((s) => (
               <div key={s.l} className="group cursor-default transition-transform duration-300 ease-out hover:-translate-y-0.5">
-                <div className="text-2xl xl:text-3xl font-semibold text-sidebar-primary tabular-nums transition-all duration-300 group-hover:brightness-125 group-hover:[text-shadow:0_0_20px_oklch(0.7_0.16_200/0.5)]">
+                <div className="text-sm font-semibold text-sidebar-primary transition-all duration-300 group-hover:brightness-125">
                   {s.v}
                 </div>
                 <div className="text-xs text-sidebar-foreground/60 mt-0.5 transition-colors duration-300 group-hover:text-sidebar-foreground/80">{s.l}</div>
@@ -175,7 +176,7 @@ function LoginPage() {
 
         {/* Footer */}
         <div className="relative mt-auto pt-10 flex items-center justify-between text-xs text-sidebar-foreground/50">
-          <span>© 2026 • University of Patras </span>
+          <span>© 2026 • APEL - University of Patras</span>
           <span className="inline-flex items-center gap-1.5">
             <ShieldCheck className="h-3.5 w-3.5" />
             JWT secured
