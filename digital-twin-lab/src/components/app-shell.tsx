@@ -10,7 +10,7 @@ import {
   Cable,
   Zap,
   LogOut,
-  Bell,
+
   Search,
   Users as UsersIcon,
 } from "lucide-react";
@@ -290,10 +290,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b border-border bg-card/80 backdrop-blur px-4 md:px-6">
           <GlobalSearch />
           <div className="ml-auto flex items-center gap-3">
-            <Button variant="ghost" size="icon" className="relative">
-              <Bell className="h-4 w-4" />
-              <span className="absolute top-2 right-2 h-1.5 w-1.5 rounded-full bg-destructive" />
-            </Button>
+
             <div className="hidden sm:flex items-center gap-3 pl-3 border-l border-border">
               <div className="text-right leading-tight">
                 <div className="text-sm font-medium">{userInfo?.name ?? "User"}</div>

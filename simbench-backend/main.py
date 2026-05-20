@@ -2207,11 +2207,19 @@ def estimate_node_flexibility(node_id: str, _cu: dict = Depends(get_current_user
     def to_steps(verts_list: list) -> list:
         return [{"t": ts, "vertices": v} for ts, v in zip(timestamps, verts_list)]
 
+    # Build bus label map: device name → "Bus {idx}" using _TOPO_PI_BUSES order
+    ordered_names = [dev["name"] for dev in devices]
+    bus_labels = {
+        name: f"Bus {_TOPO_PI_BUSES[i]}" if i < len(_TOPO_PI_BUSES) else f"Bus {i}"
+        for i, name in enumerate(ordered_names)
+    }
+
     return {
         "node_id": node_id,
         "timestamps": timestamps,
         "devices": {name: to_steps(vl) for name, vl in device_polytopes.items()},
         "combined": to_steps(combined),
+        "bus_labels": bus_labels,
     }
 
 
@@ -2260,16 +2268,22 @@ def get_node_topology(node_id: str, _cu: dict = Depends(get_current_user)):
     ))
 
     # ── Pi buses ──────────────────────────────────────────────────────────────
+    # Use actual device IDs for labels (ordered by registration)
+    node_devices = sorted(
+        [d for d in _devices.values() if d.get("node_id") == node_id],
+        key=lambda d: d["id"],
+    )
     for i, bus_idx in enumerate(_TOPO_PI_BUSES):
         bx = net.bus_geodata.loc[bus_idx, "x"]
         by = net.bus_geodata.loc[bus_idx, "y"]
+        pi_label = node_devices[i]["id"] if i < len(node_devices) else f"Pi #{i + 1}"
         fig.add_trace(go.Scatter(
             x=[bx], y=[by],
             mode="markers+text",
-            name=f"Pi #{i + 1}",
+            name=pi_label,
             marker=dict(color=_PI_COLORS[i], size=16, symbol="circle",
                         line=dict(color="#ffffff", width=2)),
-            text=[f"Pi #{i + 1}"],
+            text=[pi_label],
             textposition="top center",
             textfont=dict(size=11, color=_PI_COLORS[i]),
             hoverinfo="name",

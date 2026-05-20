@@ -49,6 +49,7 @@ interface FlexibilityResult {
   timestamps: string[];
   devices: Record<string, PolytopeStep[]>;
   combined: PolytopeStep[];
+  bus_labels: Record<string, string>;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -433,7 +434,9 @@ function ConnectionToolDevicesPage() {
                           className="h-2.5 w-2.5 rounded-sm shrink-0"
                           style={{ background: CHART_COLORS[i % CHART_COLORS.length].fill }}
                         />
-                        <span className="text-xs font-semibold">{name}</span>
+                        <span className="text-xs font-semibold">
+                          {result.bus_labels?.[name] ? `${result.bus_labels[name]} — ${name}` : name}
+                        </span>
                         <span className="text-xs text-muted-foreground ml-auto tabular-nums">
                           P<sub>c</sub> ≈ {result.devices[name][step]?.vertices
                             ? (result.devices[name][step].vertices.reduce((s, v) => s + v[0], 0) / result.devices[name][step].vertices.length).toFixed(1)
@@ -479,7 +482,7 @@ function ConnectionToolDevicesPage() {
                           borderColor: CHART_COLORS[i % CHART_COLORS.length].stroke,
                         }}
                       />
-                      <span>{name} — FOR boundary</span>
+                      <span>{result.bus_labels?.[name] ?? name} — FOR boundary</span>
                     </div>
                   ))}
                   <div className="flex items-center gap-1.5">
