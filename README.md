@@ -4,21 +4,29 @@ A web-based Digital Twin platform for power-network simulation using SimBench an
 
 ---
 
+## Project Structure
+
+```
+DT/
+├── Backend/        # FastAPI REST API + simulation engine
+├── Frontend/       # React + Vite web application
+└── Conversion/     # OpenDSS → pandapower conversion pipeline (Nando_final)
+```
+
+---
+
 ## Prerequisites
 
 | Tool | Version | Notes |
 |---|---|---|
-| Python | 3.10+ | Backend & simulation pipeline |
-| Node.js | 18+ | Frontend 
+| Python | 3.10.11 (exact) | Backend & simulation pipeline |
+| Node.js | 18+ | Frontend |
 | Docker Desktop | latest | Runs the PostgreSQL database |
 
 ---
 
 ## 1 — Start the Database (Docker)
 
-The backend requires a PostgreSQL instance. The easiest way is Docker.
-
-**Start PostgreSQL:**
 ```bash
 docker run -d \
   --name dtlab-postgres \
@@ -29,9 +37,8 @@ docker run -d \
   postgres:16
 ```
 
-> The database URL used by the backend is:
-> `postgresql+psycopg2://simbench:simbench@localhost:5432/simbench`
-> This matches the default in `simbench-backend/.env`. Change it there if needed.
+> Default connection string: `postgresql+psycopg2://simbench:simbench@localhost:5432/simbench`  
+> Configured in `Backend/.env` — edit if your credentials differ.
 
 ---
 
@@ -40,39 +47,49 @@ docker run -d \
 ### Install dependencies
 
 ```bash
-cd simbench-backend
+cd Backend
 pip install -r requirements.txt
 ```
 
-`requirements.txt` includes:
-- `fastapi`, `uvicorn` — API server
-- `simbench`, `pandapower` — power network simulation
-- `sqlalchemy`, `psycopg2-binary` — PostgreSQL ORM
-- `python-jose[cryptography]`, `bcrypt`, `python-multipart` — authentication
+Key packages:
+
+| Package | Version | Purpose |
+|---|---|---|
+| `fastapi` | 0.136.1 | REST API framework |
+| `uvicorn` | 0.46.0 | ASGI server |
+| `pandapower` | 2.14.11 | Power flow simulation |
+| `simbench` | 1.5.3 | SimBench network loader |
+| `dss-python` | 0.12.1 | OpenDSS engine |
+| `LightSim2Grid` | 0.10.3 | Fast power flow solver |
+| `plotly` | 4.14.3 | Interactive topology plots |
+| `SQLAlchemy` | 2.0.49 | Database ORM |
+| `psycopg2-binary` | 2.9.12 | PostgreSQL driver |
+| `python-jose` | 3.5.0 | JWT authentication |
+| `numpy` | 1.26.4 | Numerical computing |
+| `pandas` | 2.3.3 | Data processing |
 
 ### Configure environment
 
-The file `simbench-backend/.env` already contains the default database URL:
+Create or edit `Backend/.env`:
 
 ```env
 DATABASE_URL=postgresql+psycopg2://simbench:simbench@localhost:5432/simbench
+JWT_SECRET_KEY=change-me-in-production
+JWT_EXPIRE_HOURS=24
+SEED_USER_PASSWORD=DtLab2025!
 ```
-
-Edit it if your database credentials differ.
 
 ### Run the backend
 
 ```bash
-cd simbench-backend
+cd Backend
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-The API will be available at **http://localhost:8000**.  
-Interactive docs: **http://localhost:8000/docs**
+- API: **http://localhost:8000**
+- Interactive docs: **http://localhost:8000/docs**
 
-On first startup the backend automatically:
-- Creates all database tables
-- Seeds the default networks and users
+On first startup the backend automatically creates all database tables and seeds the default users.
 
 ---
 
@@ -81,7 +98,7 @@ On first startup the backend automatically:
 ### Install dependencies
 
 ```bash
-cd digital-twin-lab
+cd Frontend
 npm install
 ```
 
@@ -91,19 +108,59 @@ npm install
 npm run dev
 ```
 
-The app will be available at **http://localhost:8080** (or the port printed in the terminal).
+App available at **http://localhost:5173** (or the port printed in the terminal).
 
 ### Build for production
 
+```bash
+npm run build
+```
+
+Key packages:
+
+| Package | Version | Purpose |
+|---|---|---|
+| `react` | 19.2.0 | UI framework |
+| `@tanstack/react-router` | 1.168.0 | File-based routing |
+| `@tanstack/react-query` | 5.83.0 | Server state |
+| `tailwindcss` | 4.2.1 | Styling |
+| `recharts` | 3.8.1 | Charts |
+| `lucide-react` | 0.575.0 | Icons |
+| `sonner` | 2.0.7 | Toast notifications |
 
 ---
 
+## 4 — Conversion Pipeline
 
+The `Conversion/` folder contains the OpenDSS → pandapower conversion pipeline (`Nando_final`). It is invoked automatically by the backend when a user runs a conversion from the UI.
+
+No manual setup is required beyond the Backend dependencies.
+
+---
+
+## Quick Start
 
 ```
-1. docker run ← PostgreSQL
-2. uvicorn main:app --reload --host 0.0.0.0 --port 8000     ← Backend  (http://localhost:8000)
-3. npm run dev             ← Frontend (http://localhost:8080)
+1. docker run ...          ← PostgreSQL  (port 5432)
+2. cd Backend && uvicorn main:app --reload --host 0.0.0.0 --port 8000
+3. cd Frontend && npm run dev
 ```
 
+Default login credentials (seeded on first backend startup):
 
+| Email | Password | Role |
+|---|---|---|
+| admin@dtlab.io | DtLab2025! | Admin |
+| elena.marchetti@dtlab.io | DtLab2025! | Researcher |
+| (other seeded users) | DtLab2025! | Student |
+
+---
+
+## Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `DATABASE_URL` | `postgresql+psycopg2://simbench:simbench@localhost:5432/simbench` | PostgreSQL connection string |
+| `JWT_SECRET_KEY` | `change-me-in-production` | JWT signing key |
+| `JWT_EXPIRE_HOURS` | `24` | Token expiry in hours |
+| `SEED_USER_PASSWORD` | `DtLab2025!` | Default password for seeded users |
