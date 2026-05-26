@@ -509,12 +509,6 @@ def _generate_opendss_plot(network_id: str, net_xlsx: Path, net_json: Path, mode
     plot_path = PLOTS_DIR / plot_filename
     height_path = PLOTS_DIR / f"{network_id}.height"
 
-    if plot_path.exists() and height_path.exists():
-        try:
-            stored_h = int(height_path.read_text(encoding="utf-8").strip())
-        except Exception:
-            stored_h = 600
-        return f"/plots/{plot_filename}", stored_h
 
     try:
         import pandapower as pp
@@ -533,15 +527,94 @@ def _generate_opendss_plot(network_id: str, net_xlsx: Path, net_json: Path, mode
 
         fig = simple_plotly(net, auto_open=False, showlegend=True, respect_switches=False)
         fig = style_traces(fig)
+
+        # Shorten pandapower auto-generated trace names so the legend stays compact
+        _name_map = {
+            "external grid": "Ext. Grid",
+            "bus": "Bus",
+            "line": "Line",
+            "switch": "Switch",
+            "load": "Load",
+        }
+        for trace in fig.data:
+            low = (trace.name or "").lower().strip()
+            if low in _name_map:
+                trace.name = _name_map[low]
+
+        # Replace pandapower's trafo line traces (invisible for co-located buses)
+        # with classified markers at the HV bus position.
+        if not net.trafo.empty and not net.bus_geodata.empty:
+            # Hide the existing invisible trafo line/edge traces
+            for trace in fig.data:
+                tname = (trace.name or "").lower()
+                if any(k in tname for k in ("trafo", "transformer", "2w", "3w")):
+                    trace.visible = False
+
+            ext_grid_buses = set(net.ext_grid["bus"].astype(int).tolist()) if not net.ext_grid.empty else set()
+            name_col = "name" if "name" in net.trafo.columns else None
+
+            # Buckets: (xs, ys, texts) per type
+            dist, reg, iso = ([], [], []), ([], [], []), ([], [], [])
+
+            for idx, row in net.trafo.iterrows():
+                hv = int(row["hv_bus"])
+                if hv in ext_grid_buses or hv not in net.bus_geodata.index:
+                    continue
+                x = net.bus_geodata.at[hv, "x"]
+                y = net.bus_geodata.at[hv, "y"]
+                tname = (str(net.trafo.at[idx, name_col]) if name_col else str(idx)).lower()
+                label = str(net.trafo.at[idx, name_col]) if name_col else str(idx)
+                if tname.endswith("_regulator"):
+                    reg[0].append(x); reg[1].append(y); reg[2].append(label)
+                elif tname.endswith("_iso"):
+                    iso[0].append(x); iso[1].append(y); iso[2].append(label)
+                else:
+                    dist[0].append(x); dist[1].append(y); dist[2].append(label)
+
+            for (xs, ys, texts), name, color, symbol, msize in [
+                (dist, "Dist. Trafo",  COLORS["trafo"],     "square",       6),
+                (reg,  "Regulator",    COLORS["regulator"], "diamond",      10),
+                (iso,  "Iso. Trafo",   COLORS["iso_trafo"], "square-cross", 10),
+            ]:
+                if xs:
+                    full_name = name.replace("Dist. Trafo", "Distribution Transformer").replace("Iso. Trafo", "Isolation Transformer")
+                    fig.add_trace(go.Scatter(
+                        x=xs, y=ys, mode="markers", name=name,
+                        marker=dict(symbol=symbol, color=color, size=msize,
+                                    line=dict(color="#ffffff", width=1.5)),
+                        text=texts,
+                        hovertemplate=f"<b>{full_name} %{{text}}</b><extra></extra>",
+                    ))
+
+        # Capacitors — stored in net.shunt (bus, name, q_mvar columns)
+        cap_df = net.shunt if (hasattr(net, "shunt") and not net.shunt.empty) else None
+        if cap_df is not None and not net.bus_geodata.empty:
+            bus_col = "bus" if "bus" in cap_df.columns else None
+            name_col_c = "name" if "name" in cap_df.columns else None
+            if bus_col:
+                cxs, cys, ctexts = [], [], []
+                for idx, row in cap_df.iterrows():
+                    b = int(row[bus_col])
+                    if b not in net.bus_geodata.index:
+                        continue
+                    cxs.append(net.bus_geodata.at[b, "x"])
+                    cys.append(net.bus_geodata.at[b, "y"])
+                    ctexts.append(str(row[name_col_c]) if name_col_c else str(idx))
+                if cxs:
+                    fig.add_trace(go.Scatter(
+                        x=cxs, y=cys, mode="markers", name="Capacitor",
+                        marker=dict(symbol="circle", color=COLORS["capacitor"], size=8,
+                                    line=dict(color="#ffffff", width=1.5)),
+                        text=ctexts,
+                        hovertemplate="<b>Capacitor %{text}</b><extra></extra>",
+                    ))
         plot_height = compute_min_height(fig)
 
-        # Layout: match SimBench appearance — responsive, transparent background,
-        # horizontal legend at bottom, no in-plot title (name lives in the card header).
+        # Layout: responsive, transparent background, no in-plot title.
         fig.update_layout(
             autosize=True,
             width=None,
             height=None,
-            margin=dict(l=16, r=16, t=16, b=64),
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor=COLORS["bg_plot"],
             title=None,
@@ -557,15 +630,27 @@ def _generate_opendss_plot(network_id: str, net_xlsx: Path, net_json: Path, mode
                           family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"),
             ),
             legend=dict(
-                bgcolor="rgba(255,255,255,0.97)", bordercolor=COLORS["border"], borderwidth=1,
-                font=dict(size=11, color=COLORS["text_strong"],
-                          family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"),
-                orientation="h", x=0.5, y=-0.04, xanchor="center", yanchor="top",
-                itemsizing="constant", itemclick="toggleothers", itemdoubleclick="toggle", tracegroupgap=0,
+                bgcolor="rgba(255,255,255,0.97)",
+                bordercolor=COLORS["border"],
+                borderwidth=1,
+                font=dict(
+                    size=11,
+                    color=COLORS["text_strong"],
+                    family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+                ),
+                orientation="h",
+                x=0.5,
+                y=-0.04,
+                xanchor="center",
+                yanchor="top",
+                itemsizing="constant",
+                itemclick="toggleothers",
+                itemdoubleclick="toggle",
+                tracegroupgap=0,
             ),
+            margin=dict(l=16, r=16, t=16, b=100),
         )
 
-        # Use the same responsive HTML shell as SimBench plots (resize JS + branded CSS).
         html_content = build_plot_html(fig, label, plot_height)
 
         PLOTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -573,7 +658,7 @@ def _generate_opendss_plot(network_id: str, net_xlsx: Path, net_json: Path, mode
         height_path.write_text(str(plot_height), encoding="utf-8")
         return f"/plots/{plot_filename}", plot_height
     except Exception as exc:
-        logger.warning("Plot generation failed for %s: %s", network_id, exc)
+        import logging; logging.getLogger(__name__).warning("Plot generation failed for %s: %s", network_id, exc)
         return None, 0
 
 

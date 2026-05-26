@@ -27,8 +27,11 @@ COLORS = {
     "bus":            "#1a56db",   # brand blue nodes
     "bus_size":       8,
     "bus_border":     "#ffffff",
-    "trafo":          "#f59e0b",   # amber transformers
+    "trafo":          "#f59e0b",   # amber distribution transformers
     "trafo_size":     13,
+    "regulator":      "#8b5cf6",   # violet voltage regulators
+    "iso_trafo":      "#f97316",   # orange isolation transformers
+    "capacitor":      "#06b6d4",   # cyan capacitors
     "load":           "#94a3b8",   # muted gray loads
     "load_size":      6,
     "ext_grid":       "#10b981",   # green external grid
@@ -183,23 +186,40 @@ def build_plot_html(fig, code: str, min_height: int = 500, modebar_side: str = "
     const card = document.getElementById("plot-card");
     const gd   = document.querySelector(".plotly-graph-div");
     if (!card || !gd || !window.Plotly) return;
-    window.Plotly.relayout(gd, {{
-      width:  card.offsetWidth,
-      height: card.offsetHeight,
-    }});
+    const w = card.offsetWidth;
+    const h = card.offsetHeight;
+    if (!w || !h) return;
+    // Use Plotly.react for the first resize — it does a full re-render that
+    // re-measures legend text (relayout skips text measurement and clips labels).
+    if (window.Plotly.react && gd.data && !gd._fullyResized) {{
+      gd._fullyResized = true;
+      window.Plotly.react(gd, gd.data, Object.assign({{}}, gd.layout, {{ width: w, height: h }}));
+    }} else {{
+      window.Plotly.relayout(gd, {{ width: w, height: h }});
+    }}
   }}
 
   // Fire after Plotly has finished its first render
   window.addEventListener("load", () => {{
     resizePlot();
-    setTimeout(resizePlot, 150);
+    setTimeout(resizePlot, 200);
   }});
 
   // React to iframe being resized by the host UI
-  window.addEventListener("resize", resizePlot);
+  window.addEventListener("resize", () => {{
+    const card = document.getElementById("plot-card");
+    const gd   = document.querySelector(".plotly-graph-div");
+    if (!card || !gd || !window.Plotly) return;
+    window.Plotly.relayout(gd, {{ width: card.offsetWidth, height: card.offsetHeight }});
+  }});
 
   // ResizeObserver: catches any CSS-driven size changes on the card itself
-  const ro = new ResizeObserver(resizePlot);
+  const ro = new ResizeObserver(() => {{
+    const card = document.getElementById("plot-card");
+    const gd   = document.querySelector(".plotly-graph-div");
+    if (!card || !gd || !window.Plotly) return;
+    window.Plotly.relayout(gd, {{ width: card.offsetWidth, height: card.offsetHeight }});
+  }});
   ro.observe(document.getElementById("plot-card"));
 </script>
 

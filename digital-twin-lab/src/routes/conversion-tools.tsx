@@ -274,14 +274,15 @@ function ConversionResult({
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_auto] gap-4 items-stretch">
         {/* Left — topology plot */}
         {result.plot_url ? (
-          <Card className="overflow-auto p-0">
-            <div className="px-5 pt-4 pb-3 text-sm font-semibold">Topology overview</div>
-            <iframe
-              src={`${API_BASE}${result.plot_url}?v=${Date.now()}`}
-              title={`${result.network_name} topology`}
-              style={{ width: 1200, height: result.plot_height ?? 900, border: 0, display: "block" }}
-              scrolling="no"
-            />
+          <Card className="p-0 overflow-hidden">
+            <div className="px-5 pt-4 pb-3 text-sm font-semibold shrink-0">Topology overview</div>
+            <div className="relative w-full h-[600px]">
+              <iframe
+                src={`${API_BASE}${result.plot_url}?v=${Date.now()}`}
+                title={`${result.network_name} topology`}
+                className="w-full h-full border-0 block"
+              />
+            </div>
           </Card>
         ) : (
           <Card className="p-5 flex items-center justify-center text-muted-foreground text-sm border-dashed" style={{ minHeight: 200 }}>
